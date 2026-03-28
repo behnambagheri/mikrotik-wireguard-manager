@@ -57,8 +57,11 @@ Profile fields:
 - `router_ip` (required)
 - `endpoint_ip` (optional, used in generated client config)
 - `dns_servers` (optional, used in generated client config)
+- `transport` (optional, `rest`, `api_ssl`, or `api`; default `rest`)
 - `use_https` (optional, `true|false`, default `false`)
 - `timeout_sec` (optional, default `30`)
+
+Use `transport=api_ssl` or `transport=api` for older RouterOS versions where `/rest` is unavailable (for example some 7.6 builds).
 
 Legacy single-router env is still supported:
 
@@ -91,4 +94,3 @@ Press `?` on any screen.
 - `src/wg_users_tui/cli.py` CLI entry/help
 - `src/wg_users_tui/__main__.py` module entrypoint
 - `src/wg_users_tui/__init__.py` package metadata
-

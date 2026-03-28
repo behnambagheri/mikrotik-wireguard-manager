@@ -2151,7 +2151,7 @@ class App:
                 yy += 1
             return yy
 
-        self.put(0, 0, f" User Details ".ljust(w), self.c_title)
+        self.put(0, 0, " User Details ".ljust(w), self.c_title)
         self.put(1, 0, ("-" * max(1, w))[:w], self.c_hint)
         self.put(2, 0, f"Name: {p.comment or '(no comment)'}", self.c_header)
         self.put(2, max(0, w - 28), f"State: {'disabled' if p.disabled else 'enabled'}", state_attr)

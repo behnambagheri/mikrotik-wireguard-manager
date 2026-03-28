@@ -1,5 +1,8 @@
 # WireGuard Users Traffic Monitor TUI
 
+[![Test](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/test.yml/badge.svg)](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/test.yml)
+[![Lint](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/lint.yml/badge.svg)](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/lint.yml)
+
 Use this terminal application to manage your MikroTik RouterOS WireGuard users across multiple routers.
 
 ## Features

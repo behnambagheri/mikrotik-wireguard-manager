@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import time
@@ -420,6 +421,8 @@ class App:
         self.last_poll_ok_ts = 0
         self.history_cpu: deque[float] = deque(maxlen=120)
         self.history_bw: deque[float] = deque(maxlen=120)
+        self.diagnostics: List[Dict[str, str]] = []
+        self.diagnostics_last_run = 0
         self.last_refresh_at = 0.0
         self.status = "Ready"
         self.error = ""
@@ -459,6 +462,8 @@ class App:
             self.normalize_selection(table_rows)
             if self.view_mode == "dashboard":
                 self.draw_dashboard()
+            elif self.view_mode == "diagnostics":
+                self.draw_diagnostics()
             else:
                 self.draw_main()
             ch = self.stdscr.getch()
@@ -472,6 +477,9 @@ class App:
             if self.view_mode == "dashboard":
                 if ch in (ord("l"), ord("c"), ord("\n"), 10, 13):
                     self.view_mode = "clients"
+                elif ch in (ord("g"),):
+                    self.view_mode = "diagnostics"
+                    self.run_connection_diagnostics()
                 elif ch in (ord("p"),):
                     order = [0, 3600, 86400, 7 * 86400]
                     try:
@@ -514,6 +522,12 @@ class App:
                         self.error = f"Export failed: {e}"
                 elif ch in (ord("r"),):
                     self.refresh_data(force=True)
+                continue
+            if self.view_mode == "diagnostics":
+                if ch in (ord("b"), ord("h")):
+                    self.view_mode = "dashboard"
+                elif ch in (ord("r"),):
+                    self.run_connection_diagnostics()
                 continue
             if ch in (curses.KEY_DOWN, ord("j")):
                 if self.visible_peers:
@@ -575,6 +589,7 @@ class App:
             "",
             "Dashboard:",
             "  l / Enter    Open client list",
+            "  g            Open connection diagnostics",
             "  p            Cycle interface traffic window (off/1h/1d/1w)",
             "  w            Reset dashboard window baseline now",
             "  i            Open client list filtered by interface",
@@ -909,6 +924,125 @@ class App:
         if stale:
             alerts.append(f"Stale handshake peers (>10m): {len(stale)}")
         return alerts
+
+    @staticmethod
+    def tcp_open(host: str, port: int, timeout: float = 1.5) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
+    def rest_probe(self, host: str, user: str, password: str, scheme: str, timeout_sec: float) -> Tuple[str, str]:
+        import base64
+
+        url = f"{scheme}://{host}/rest/system/resource"
+        headers = {
+            "Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii"),
+            "Accept": "application/json",
+        }
+        req = request.Request(url, method="GET", headers=headers)
+        try:
+            if scheme == "https":
+                resp = request.urlopen(req, timeout=timeout_sec, context=ssl._create_unverified_context())
+            else:
+                resp = request.urlopen(req, timeout=timeout_sec)
+            with resp:
+                _ = resp.read(128)
+            return ("ok", "REST reachable")
+        except error.HTTPError as e:
+            if e.code in (401, 403):
+                return ("auth", f"HTTP {e.code}")
+            if e.code == 404:
+                return ("rest-404", "REST path not available")
+            return ("error", f"HTTP {e.code}")
+        except Exception as e:
+            msg = str(e).lower()
+            if "refused" in msg or "timed out" in msg or "no route" in msg:
+                return ("unreachable", str(e))
+            return ("error", str(e))
+
+    def classify_profile(self, name: str, cfg: Dict[str, str]) -> Dict[str, str]:
+        host = cfg.get("router_ip", "").strip()
+        user = cfg.get("user", "").strip()
+        password = cfg.get("password", "").strip().strip('"').strip("'")
+        use_https = str(cfg.get("use_https", "false")).lower() == "true"
+        timeout_sec = float(cfg.get("timeout_sec", "5") or "5")
+        if not host or not user or not password:
+            return {"profile": name, "router_ip": host or "-", "status": "error", "detail": "missing router_ip/user/password", "ports": "-"}
+
+        p80 = self.tcp_open(host, 80)
+        p443 = self.tcp_open(host, 443)
+        p8729 = self.tcp_open(host, 8729)
+        ports = f"80:{'open' if p80 else 'closed'} 443:{'open' if p443 else 'closed'} 8729:{'open' if p8729 else 'closed'}"
+
+        schemes = ["https", "http"] if use_https else ["http", "https"]
+        first_status, first_detail = self.rest_probe(host, user, password, schemes[0], timeout_sec)
+        if first_status == "ok":
+            return {"profile": name, "router_ip": host, "status": "ok", "detail": f"{schemes[0]} ok", "ports": ports}
+
+        second_status, second_detail = self.rest_probe(host, user, password, schemes[1], timeout_sec)
+        if second_status == "ok":
+            return {"profile": name, "router_ip": host, "status": "ok", "detail": f"{schemes[1]} ok (preferred {schemes[0]} failed: {first_status})", "ports": ports}
+
+        # Classification precedence
+        for st, dt in ((first_status, first_detail), (second_status, second_detail)):
+            if st == "auth":
+                return {"profile": name, "router_ip": host, "status": "auth", "detail": dt, "ports": ports}
+        for st, dt in ((first_status, first_detail), (second_status, second_detail)):
+            if st == "rest-404":
+                return {"profile": name, "router_ip": host, "status": "rest-404", "detail": dt, "ports": ports}
+        for st, dt in ((first_status, first_detail), (second_status, second_detail)):
+            if st == "unreachable":
+                return {"profile": name, "router_ip": host, "status": "unreachable", "detail": dt, "ports": ports}
+        if not p80 and not p443:
+            return {"profile": name, "router_ip": host, "status": "unreachable", "detail": "REST ports closed (80/443)", "ports": ports}
+        return {"profile": name, "router_ip": host, "status": "error", "detail": f"{first_status}/{second_status}", "ports": ports}
+
+    def run_connection_diagnostics(self) -> None:
+        rows: List[Dict[str, str]] = []
+        profiles = self.profiles.copy()
+        if not profiles:
+            profiles = {
+                "default": {
+                    "router_ip": self.host,
+                    "user": self.user,
+                    "password": self.password,
+                    "use_https": "true" if self.use_https else "false",
+                    "timeout_sec": str(self.timeout_sec),
+                }
+            }
+        for name, cfg in profiles.items():
+            try:
+                rows.append(self.classify_profile(name, cfg))
+            except Exception as e:
+                rows.append({"profile": name, "router_ip": cfg.get("router_ip", "-"), "status": "error", "detail": str(e), "ports": "-"})
+        self.diagnostics = rows
+        self.diagnostics_last_run = now_ts()
+        self.status = f"Diagnostics finished for {len(rows)} profile(s)"
+
+    def draw_diagnostics(self) -> None:
+        self.stdscr.erase()
+        h, w = self.stdscr.getmaxyx()
+        self.put(0, 0, " Connection Diagnostics ".ljust(w), self.c_title)
+        self.put(1, 0, ("-" * max(1, w))[:w], self.c_hint)
+        ran = "never" if not self.diagnostics_last_run else f"{self.age_h(max(0, now_ts()-self.diagnostics_last_run))} ago"
+        self.put(2, 0, f"Last run: {ran} | Profiles: {len(self.diagnostics)}", self.c_header)
+        self.put(3, 0, "+" + "-" * max(1, w - 2) + "+", self.c_hint)
+        self.put(4, 0, self._fit("| Profile            | Router IP        | Status       | Ports                         | Detail", w), self.c_header)
+        self.put(5, 0, "+" + "-" * max(1, w - 2) + "+", self.c_hint)
+        rows = max(1, h - 10)
+        for i, d in enumerate(self.diagnostics[:rows]):
+            line = f"| {self._fit(d.get('profile','-'),18)} | {self._fit(d.get('router_ip','-'),16)} | {self._fit(d.get('status','-'),12)} | {self._fit(d.get('ports','-'),29)} | {d.get('detail','-')}"
+            attr = self.c_status if d.get("status") == "ok" else (self.c_error if d.get("status") in ("auth", "rest-404", "unreachable", "error") else self.c_normal)
+            self.put(6 + i, 0, self._fit(line, w), attr)
+        self.put(6 + min(len(self.diagnostics), rows), 0, "+" + "-" * max(1, w - 2) + "+", self.c_hint)
+        actions = "Keys: r run diagnostics | b dashboard | ? help | q quit"
+        msg = self.error if self.error else self.status
+        self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
+        self.put(h - 2, 0, ("-" * max(1, w))[:w], self.c_hint)
+        self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)
+        self.stdscr.refresh()
 
     def top_users_by_speed(self, n: int = 5) -> List[Tuple[str, float]]:
         rows: List[Tuple[str, float]] = []
@@ -1283,7 +1417,7 @@ class App:
         self.put(y_after_table + 3, 0, ("WG health: " + (" | ".join(wg_health) if wg_health else "none"))[:w], self.c_hint)
 
         msg = self.error if self.error else self.status
-        actions = "Keys: l clients | i clients-by-iface | u disabled clients | p cycle window | w reset window | j export json | v export csv | ? help | r refresh | q quit"
+        actions = "Keys: l clients | g diagnostics | i clients-by-iface | u disabled clients | p cycle window | w reset window | j export json | v export csv | ? help | r refresh | q quit"
         self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
         self.put(h - 2, 0, ("-" * max(1, w))[:w], self.c_hint)
         self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)

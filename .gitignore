@@ -5,3 +5,4 @@ LOCAL_NOTES.md
 .wg_tui_state.json
 *.csv
 *.json
+.idea

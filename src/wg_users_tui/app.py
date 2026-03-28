@@ -743,6 +743,8 @@ class App:
             if self.view_mode == "dashboard":
                 if ch in (ord("l"), ord("c"), ord("\n"), 10, 13):
                     self.view_mode = "clients"
+                elif ch in (ord("m"),):
+                    self.switch_router_profile()
                 elif ch in (ord("g"),):
                     self.view_mode = "diagnostics"
                     self.run_connection_diagnostics()
@@ -838,6 +840,8 @@ class App:
                 self.main_add_peer()
             elif ch in (ord("b"), ord("h")):
                 self.view_mode = "dashboard"
+            elif ch in (ord("m"),):
+                self.switch_router_profile()
             elif ch in (ord("\n"), curses.KEY_ENTER, 10, 13):
                 if self.visible_peers:
                     self.user_menu(self.visible_peers[self.selected])
@@ -852,6 +856,7 @@ class App:
             "  ?            Show this help",
             "  q / Esc      Quit app",
             "  r            Refresh now",
+            "  m            Switch router profile",
             "",
             "Dashboard:",
             "  l / Enter    Open client list",
@@ -922,41 +927,10 @@ class App:
         # Multi-router profile mode from .env:
         # profile={user=...,password=...,router_ip=...,endpoint_ip=...,dns_servers=...}
         if self.profiles:
-            names = sorted(self.profiles.keys())
-            rows = []
-            for n in names:
-                p = self.profiles[n]
-                rows.append(
-                    f"{n} | {p.get('router_ip','?')} | user:{p.get('user','?')} | endpoint:{p.get('endpoint_ip', CFG_ENDPOINT_HOST)}"
-                )
-            idx = self.choose_from_dialog("Select Router Profile", rows)
-            if idx is None:
+            selected = self.select_profile_dialog()
+            if selected is None:
                 raise RuntimeError("No router selected")
-            selected = names[idx]
-            p = self.profiles[selected]
-            host = p.get("router_ip", "").strip()
-            user = p.get("user", "").strip()
-            password = p.get("password", "").strip().strip('"').strip("'")
-            if not host or not user or not password:
-                raise RuntimeError(f"Profile '{selected}' missing router_ip/user/password")
-            self.profile_name = selected
-            self.host = host
-            self.user = user
-            self.password = password
-            self.use_https = str(p.get("use_https", "false")).lower() == "true"
-            self.timeout_sec = float(p.get("timeout_sec", "30") or "30")
-            transport = str(p.get("transport", "rest")).strip().lower()
-            self.cfg_dns = p.get("dns_servers", CFG_DNS).strip() or CFG_DNS
-            self.cfg_endpoint_host = p.get("endpoint_ip", CFG_ENDPOINT_HOST).strip() or CFG_ENDPOINT_HOST
-            if transport in ("api_ssl", "api-ssl"):
-                self.client = ApiSslClient(self.host, self.user, self.password, timeout_sec=self.timeout_sec, port=8729, use_ssl=True)
-                self.status = f"Connected profile: {self.profile_name} ({self.host}) via api-ssl"
-            elif transport in ("api",):
-                self.client = ApiSslClient(self.host, self.user, self.password, timeout_sec=self.timeout_sec, port=8728, use_ssl=False)
-                self.status = f"Connected profile: {self.profile_name} ({self.host}) via api"
-            else:
-                self.client = RouterOSClient(self.host, self.user, self.password, use_https=self.use_https, timeout_sec=self.timeout_sec)
-                self.status = f"Connected profile: {self.profile_name} ({self.host}) via rest"
+            self.connect_profile(selected, self.profiles[selected])
             return
 
         # Backward-compatible single-router mode
@@ -976,6 +950,79 @@ class App:
         self.cfg_dns = os.environ.get("DNS_SERVERS", CFG_DNS).strip() or CFG_DNS
         self.cfg_endpoint_host = os.environ.get("ENDPOINT_IP", CFG_ENDPOINT_HOST).strip() or CFG_ENDPOINT_HOST
         self.client = RouterOSClient(self.host, self.user, self.password, use_https=self.use_https, timeout_sec=self.timeout_sec)
+
+    def select_profile_dialog(self) -> Optional[str]:
+        names = sorted(self.profiles.keys())
+        rows = []
+        for n in names:
+            p = self.profiles[n]
+            rows.append(
+                f"{n} | {p.get('router_ip','?')} | user:{p.get('user','?')} | endpoint:{p.get('endpoint_ip', CFG_ENDPOINT_HOST)}"
+            )
+        idx = self.choose_from_dialog("Select Router Profile", rows)
+        if idx is None:
+            return None
+        return names[idx]
+
+    def connect_profile(self, name: str, p: Dict[str, str]) -> None:
+        host = p.get("router_ip", "").strip()
+        user = p.get("user", "").strip()
+        password = p.get("password", "").strip().strip('"').strip("'")
+        if not host or not user or not password:
+            raise RuntimeError(f"Profile '{name}' missing router_ip/user/password")
+        self.profile_name = name
+        self.host = host
+        self.user = user
+        self.password = password
+        self.use_https = str(p.get("use_https", "false")).lower() == "true"
+        self.timeout_sec = float(p.get("timeout_sec", "30") or "30")
+        transport = str(p.get("transport", "rest")).strip().lower()
+        self.cfg_dns = p.get("dns_servers", CFG_DNS).strip() or CFG_DNS
+        self.cfg_endpoint_host = p.get("endpoint_ip", CFG_ENDPOINT_HOST).strip() or CFG_ENDPOINT_HOST
+        if transport in ("api_ssl", "api-ssl"):
+            self.client = ApiSslClient(self.host, self.user, self.password, timeout_sec=self.timeout_sec, port=8729, use_ssl=True)
+            self.status = f"Connected profile: {self.profile_name} ({self.host}) via api-ssl"
+        elif transport in ("api",):
+            self.client = ApiSslClient(self.host, self.user, self.password, timeout_sec=self.timeout_sec, port=8728, use_ssl=False)
+            self.status = f"Connected profile: {self.profile_name} ({self.host}) via api"
+        else:
+            self.client = RouterOSClient(self.host, self.user, self.password, use_https=self.use_https, timeout_sec=self.timeout_sec)
+            self.status = f"Connected profile: {self.profile_name} ({self.host}) via rest"
+
+    def reset_runtime_caches(self) -> None:
+        self.selected = 0
+        self.top = 0
+        self.view_mode = "dashboard"
+        self.peers = []
+        self.router_resource = {}
+        self.interfaces = []
+        self.visible_peers = []
+        self.last_sample = {}
+        self.iface_last_sample = {}
+        self.iface_speed = {}
+        self.iface_baseline = {}
+        self.dash_window_started_at = now_ts()
+        self.history_cpu.clear()
+        self.history_bw.clear()
+        self.last_poll_latency_ms = 0.0
+        self.last_poll_ok_ts = 0
+        self.remote_synced = False
+        self.error = ""
+
+    def switch_router_profile(self) -> None:
+        if not self.profiles:
+            self.error = "Router switch is available only in multi-profile mode (.env profiles)"
+            return
+        selected = self.select_profile_dialog()
+        if selected is None:
+            self.status = "Router switch cancelled"
+            return
+        try:
+            self.connect_profile(selected, self.profiles[selected])
+            self.reset_runtime_caches()
+            self.refresh_data(force=True)
+        except Exception as e:
+            self.error = f"Failed to switch router: {e}"
 
     def init_colors(self) -> None:
         if not curses.has_colors():
@@ -1644,7 +1691,7 @@ class App:
         msg = self.error if self.error else self.status
         sel = self.visible_peers[self.selected] if self.visible_peers else None
         full = f"Selected: {sel.comment or '-'} | IP: {sel.ip} | Peer: {sel.peer_id}" if sel else "Selected: none"
-        actions = "Keys: Enter actions | j/k move | o sort | O reverse | / filter | u disabled-only | a add | e enable | d disable | x delete | b dashboard | ? help | r refresh | q quit"
+        actions = "Keys: Enter actions | j/k move | o sort | O reverse | / filter | u disabled-only | a add | e enable | d disable | x delete | b dashboard | m switch router | ? help | r refresh | q quit"
         self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
         self.put(h - 2, 0, full[:w].ljust(w), self.c_hint)
         self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)
@@ -1717,7 +1764,7 @@ class App:
         self.put(y_after_table + 3, 0, ("WG health: " + (" | ".join(wg_health) if wg_health else "none"))[:w], self.c_hint)
 
         msg = self.error if self.error else self.status
-        actions = "Keys: l clients | g diagnostics | i clients-by-iface | u disabled clients | p cycle window | w reset window | j export json | v export csv | ? help | r refresh | q quit"
+        actions = "Keys: l clients | g diagnostics | i clients-by-iface | u disabled clients | p cycle window | w reset window | j export json | v export csv | m switch router | ? help | r refresh | q quit"
         self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
         self.put(h - 2, 0, ("-" * max(1, w))[:w], self.c_hint)
         self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)

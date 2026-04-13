@@ -187,6 +187,13 @@ def ros_q(text: str) -> str:
     return f'"{s}"'
 
 
+def pdf_escape_text(text: str) -> str:
+    s = str(text or "")
+    s = s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    # Built-in Helvetica encoding is Latin-1-like; replace unsupported chars.
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
 def parse_ros_duration_to_seconds(text: str) -> Optional[int]:
     s = (text or "").strip().lower()
     if not s:
@@ -848,6 +855,20 @@ class App:
                     self.main_delete_peer(self.visible_peers[self.selected])
             elif ch in (ord("a"),):
                 self.main_add_peer()
+            elif ch in (ord("J"),):
+                try:
+                    path = self.export_users_snapshot_json()
+                    self.status = f"Users snapshot exported: {path}"
+                    self.error = ""
+                except Exception as e:
+                    self.error = f"Export failed: {e}"
+            elif ch in (ord("P"),):
+                try:
+                    path = self.export_users_snapshot_pdf()
+                    self.status = f"Users snapshot exported: {path}"
+                    self.error = ""
+                except Exception as e:
+                    self.error = f"Export failed: {e}"
             elif ch in (ord("b"), ord("h")):
                 self.view_mode = "dashboard"
             elif ch in (ord("m"),):
@@ -885,6 +906,7 @@ class App:
             "  / or f       Search/filter clients",
             "  u            Toggle disabled-only filter",
             "  a            Add client (wizard)",
+            "  J / P        Export all users snapshot JSON / PDF",
             "  e / d        Enable / disable selected client",
             "  x            Delete selected client (with confirm)",
             "  Enter        Open selected client details",
@@ -904,6 +926,7 @@ class App:
             "  - Pick interface",
             "  - Suggested free IP is prefilled (Enter accepts it)",
             "  - Client keypair generated automatically",
+            "  - Optional speed/quota/policy prompts (blank skips each)",
             "  - Config viewer: c=copy, s=save, q=close",
             "",
             "Persistence and Automation:",
@@ -1472,6 +1495,154 @@ class App:
             json.dump(payload, f, indent=2)
         return path
 
+    def build_users_export_rows(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for p in self.peers:
+            st = self.state.peer(p.peer_id)
+            down_used, up_used = self.peer_used_bytes(p, st)
+            row = {
+                "peer_id": p.peer_id,
+                "name": p.comment or "",
+                "interface": p.interface,
+                "ip": p.ip,
+                "state": "disabled" if p.disabled else "enabled",
+                "last_handshake": p.last_handshake,
+                "total_download_bytes": p.tx,
+                "total_upload_bytes": p.rx,
+                "download_since_baseline_bytes": down_used,
+                "upload_since_baseline_bytes": up_used,
+                "realtime_down_bps": int(p.down_speed_bps),
+                "realtime_up_bps": int(p.up_speed_bps),
+                "baseline_at": int(st.get("baseline_at", 0) or 0),
+                "baseline_age_seconds": max(0, now_ts() - int(st.get("baseline_at", now_ts()) or now_ts())),
+                "traffic_limit_down_bytes": int(st.get("traffic_limit_down_bytes", 0) or 0),
+                "traffic_limit_up_bytes": int(st.get("traffic_limit_up_bytes", 0) or 0),
+                "traffic_period_seconds": int(st.get("traffic_period_seconds", 0) or 0),
+                "overlimit_mode": str(st.get("overlimit_mode", "disable") or "disable"),
+                "overlimit_speed_down_bps": int(st.get("overlimit_speed_down_bps", 0) or 0),
+                "overlimit_speed_up_bps": int(st.get("overlimit_speed_up_bps", 0) or 0),
+                "overlimit_active": bool(st.get("overlimit_active", False)),
+                "speed_limit_down_bps": int(st.get("speed_limit_down_bps", 0) or 0),
+                "speed_limit_up_bps": int(st.get("speed_limit_up_bps", 0) or 0),
+                "exempt_destination_list": self.cfg_exempt_dst_list,
+            }
+            rows.append(row)
+        rows.sort(key=lambda r: (str(r.get("interface", "")), str(r.get("name", "")).lower(), str(r.get("ip", ""))))
+        return rows
+
+    def export_users_snapshot_json(self) -> str:
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        path = f"users-snapshot-{self.profile_name}-{ts}.json"
+        rows = self.build_users_export_rows()
+        payload = {
+            "generated_at_epoch": now_ts(),
+            "generated_at_local": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "router_profile": self.profile_name,
+            "router_ip": self.host,
+            "users_count": len(rows),
+            "poll_latency_ms": self.last_poll_latency_ms,
+            "exempt_destination_list": self.cfg_exempt_dst_list,
+            "users": rows,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return path
+
+    def write_simple_pdf(self, path: str, pages_lines: List[List[str]]) -> None:
+        # Minimal text-only PDF generator without external dependencies.
+        page_chunks = pages_lines if pages_lines else [["No data"]]
+        objects: List[Tuple[int, bytes]] = []
+        font_id = 3
+        next_id = 4
+        page_ids: List[int] = []
+        content_ids: List[int] = []
+        for _ in page_chunks:
+            page_ids.append(next_id)
+            content_ids.append(next_id + 1)
+            next_id += 2
+
+        objects.append((1, b"<< /Type /Catalog /Pages 2 0 R >>"))
+        kids = " ".join(f"{pid} 0 R" for pid in page_ids)
+        objects.append((2, f"<< /Type /Pages /Kids [ {kids} ] /Count {len(page_ids)} >>".encode("ascii")))
+        objects.append((font_id, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"))
+
+        for i, lines in enumerate(page_chunks):
+            page_id = page_ids[i]
+            content_id = content_ids[i]
+            body: List[str] = ["BT", "/F1 10 Tf", "50 800 Td"]
+            for idx, ln in enumerate(lines):
+                text = pdf_escape_text(ln[:140])
+                if idx == 0:
+                    body.append(f"({text}) Tj")
+                else:
+                    body.append("0 -14 Td")
+                    body.append(f"({text}) Tj")
+            body.append("ET")
+            stream = "\n".join(body).encode("latin-1", "replace")
+            page_obj = (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>"
+            ).encode("ascii")
+            content_obj = b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream"
+            objects.append((page_id, page_obj))
+            objects.append((content_id, content_obj))
+
+        objects.sort(key=lambda x: x[0])
+        out = bytearray()
+        out += b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+        offsets: Dict[int, int] = {}
+        for oid, body in objects:
+            offsets[oid] = len(out)
+            out += f"{oid} 0 obj\n".encode("ascii")
+            out += body
+            out += b"\nendobj\n"
+
+        xref_pos = len(out)
+        max_obj = max(offsets.keys()) if offsets else 0
+        out += f"xref\n0 {max_obj + 1}\n".encode("ascii")
+        out += b"0000000000 65535 f \n"
+        for i in range(1, max_obj + 1):
+            off = offsets.get(i, 0)
+            out += f"{off:010d} 00000 n \n".encode("ascii")
+        out += f"trailer\n<< /Size {max_obj + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("ascii")
+
+        with open(path, "wb") as f:
+            f.write(out)
+
+    def export_users_snapshot_pdf(self) -> str:
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        path = f"users-snapshot-{self.profile_name}-{ts}.pdf"
+        rows = self.build_users_export_rows()
+        lines: List[str] = [
+            "WireGuard Users Snapshot",
+            f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Router: {self.profile_name}@{self.host}",
+            f"Users: {len(rows)}",
+            f"Exempt destination list: {self.cfg_exempt_dst_list}",
+            "-" * 120,
+        ]
+        for idx, r in enumerate(rows, start=1):
+            lines.extend(
+                [
+                    f"{idx}. {r.get('name') or '-'} | {r.get('ip')} | {r.get('interface')} | {r.get('state')}",
+                    f"   Total D/U: {bytes_h(int(r.get('total_download_bytes',0)))} / {bytes_h(int(r.get('total_upload_bytes',0)))}",
+                    f"   Used D/U:  {bytes_h(int(r.get('download_since_baseline_bytes',0)))} / {bytes_h(int(r.get('upload_since_baseline_bytes',0)))}",
+                    f"   Speed D/U: {bps_h(float(r.get('realtime_down_bps',0)))} / {bps_h(float(r.get('realtime_up_bps',0)))}",
+                    f"   Limit D/U: {bytes_h(int(r.get('traffic_limit_down_bytes',0)))} / {bytes_h(int(r.get('traffic_limit_up_bytes',0)))} | period: {self.period_h(int(r.get('traffic_period_seconds',0)))}",
+                    f"   Over-limit: mode={r.get('overlimit_mode')} active={'yes' if r.get('overlimit_active') else 'no'} speed D/U {bps_h(float(r.get('overlimit_speed_down_bps',0)))} / {bps_h(float(r.get('overlimit_speed_up_bps',0)))}",
+                    f"   Speed cap D/U: {bps_h(float(r.get('speed_limit_down_bps',0)))} / {bps_h(float(r.get('speed_limit_up_bps',0)))}",
+                    f"   Peer ID: {r.get('peer_id')} | Last HS: {r.get('last_handshake') or '-'} | Baseline age: {self.age_h(int(r.get('baseline_age_seconds',0)))}",
+                    "-" * 120,
+                ]
+            )
+
+        max_lines_per_page = 50
+        pages_lines: List[List[str]] = []
+        for i in range(0, len(lines), max_lines_per_page):
+            pages_lines.append(lines[i : i + max_lines_per_page])
+        self.write_simple_pdf(path, pages_lines)
+        return path
+
     @staticmethod
     def _row_bytes(row: Dict[str, Any]) -> int:
         for k in ("bytes", "byte", "bytes-total"):
@@ -1802,7 +1973,7 @@ class App:
         msg = self.error if self.error else self.status
         sel = self.visible_peers[self.selected] if self.visible_peers else None
         full = f"Selected: {sel.comment or '-'} | IP: {sel.ip} | Peer: {sel.peer_id}" if sel else "Selected: none"
-        actions = "Keys: Enter actions | j/k move | o sort | O reverse | / filter | u disabled-only | a add | e enable | d disable | x delete | b dashboard | m switch router | ? help | r refresh | q quit"
+        actions = "Keys: Enter actions | j/k move | o sort | O reverse | / filter | u disabled-only | a add | J export-json | P export-pdf | e enable | d disable | x delete | b dashboard | m switch router | ? help | r refresh | q quit"
         self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
         self.put(h - 2, 0, full[:w].ljust(w), self.c_hint)
         self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)
@@ -2232,6 +2403,9 @@ class App:
             self.status = f"Peer added: {comment.strip() or ip_obj}"
             self.error = ""
             self.refresh_data(force=True)
+            created = next((x for x in self.peers if x.interface == iface_name and x.ip == str(ip_obj)), None)
+            if created is not None:
+                self.configure_new_peer_limits(created)
 
             conf = [
                 "[Interface]",
@@ -2249,6 +2423,115 @@ class App:
             self.show_config_dialog("Client Configuration", "\n".join(conf), default_filename=f"{safe_name}.conf")
         except Exception as e:
             self.error = f"Add failed: {e}"
+
+    def configure_new_peer_limits(self, p: PeerView) -> None:
+        # New-client wizard step: each prompt is optional; empty input skips that field.
+        st = self.state.peer(p.peer_id)
+        speed_down = st.get("speed_limit_down_bps", 0)
+        speed_up = st.get("speed_limit_up_bps", 0)
+        t_down = st.get("traffic_limit_down_bytes", 0)
+        t_up = st.get("traffic_limit_up_bytes", 0)
+        t_period = st.get("traffic_period_seconds", 0)
+        mode = st.get("overlimit_mode", "disable")
+        over_down = st.get("overlimit_speed_down_bps", 0)
+        over_up = st.get("overlimit_speed_up_bps", 0)
+
+        def ask(label: str) -> Optional[str]:
+            return self.prompt_in_dialog("New Client Limits (optional)", label, "")
+
+        try:
+            s = ask("Download speed Mbps (blank=skip, 0=not set):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("download speed must be >= 0")
+                speed_down = mbps_to_bps(v) if v > 0 else 0
+
+            s = ask("Upload speed Mbps (blank=skip, 0=not set):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("upload speed must be >= 0")
+                speed_up = mbps_to_bps(v) if v > 0 else 0
+
+            s = ask("Traffic limit down GB (blank=skip, 0=not set):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("download quota must be >= 0")
+                t_down = gb_to_bytes(v) if v > 0 else 0
+
+            s = ask("Traffic limit up GB (blank=skip, 0=not set):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("upload quota must be >= 0")
+                t_up = gb_to_bytes(v) if v > 0 else 0
+
+            s = ask("Traffic period (blank=skip, 0/day/hour/week/2h/1d):")
+            if s is None:
+                return
+            if s.strip() != "":
+                t_period = parse_period_input(s.strip())
+                if t_period < 0:
+                    raise ValueError("period must be >= 0")
+
+            s = ask("On limit mode (blank=skip, disable/throttle/trusted_only):")
+            if s is None:
+                return
+            if s.strip() != "":
+                m = s.strip().lower()
+                if m in ("trusted", "trusted-only", "trustedonly"):
+                    m = "trusted_only"
+                if m not in ("disable", "throttle", "trusted_only"):
+                    raise ValueError("mode must be disable, throttle, or trusted_only")
+                mode = m
+
+            s = ask("Over-limit down Mbps (blank=skip, 0=off):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("over-limit down must be >= 0")
+                over_down = mbps_to_bps(v) if v > 0 else 0
+
+            s = ask("Over-limit up Mbps (blank=skip, 0=off):")
+            if s is None:
+                return
+            if s.strip() != "":
+                v = float(s)
+                if v < 0:
+                    raise ValueError("over-limit up must be >= 0")
+                over_up = mbps_to_bps(v) if v > 0 else 0
+
+            self.apply_speed_rules(p, down_bps=int(speed_down or 0), up_bps=int(speed_up or 0))
+            st["speed_limit_down_bps"] = int(speed_down or 0)
+            st["speed_limit_up_bps"] = int(speed_up or 0)
+            st["traffic_limit_down_bytes"] = int(t_down or 0)
+            st["traffic_limit_up_bytes"] = int(t_up or 0)
+            st["traffic_period_seconds"] = int(t_period or 0)
+            st["overlimit_mode"] = str(mode or "disable")
+            st["overlimit_speed_down_bps"] = int(over_down or 0)
+            st["overlimit_speed_up_bps"] = int(over_up or 0)
+            st["overlimit_active"] = False
+            st["disabled_by_policy"] = False
+            self.apply_trusted_only_rule(p, enabled=False)
+            self.reset_usage(p)
+            self.install_remote_policy(p, st)
+            self.state.save()
+            self.status = f"Optional limits applied for {p.comment or p.ip}"
+            self.error = ""
+        except Exception as e:
+            self.error = f"New-client limits not applied: {e}"
 
     def user_menu(self, p: PeerView) -> None:
         while True:

@@ -8,3 +8,4 @@ LOCAL_NOTES.md
 .idea
 *.conf
 client-configs/
+*.pdf

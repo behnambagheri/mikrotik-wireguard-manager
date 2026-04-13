@@ -124,6 +124,27 @@ invalid=just-text
         self.assertEqual(up_used, 800_000)   # (1_000_000-100_000) - (110_000-10_000)
         self.assertEqual(down_used, 1_600_000)  # (2_000_000-200_000) - (220_000-20_000)
 
+    def test_build_users_export_rows_contains_policy_and_usage(self):
+        with mock.patch.dict(os.environ, {"WG_TUI_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
+            a = app.App(DummyStdScr())
+        p = app.PeerView(peer_id="*9", interface="wireguard", ip="100.100.100.9", comment="User9", rx=5000, tx=7000, disabled=False)
+        a.peers = [p]
+        a.peer_exempt_counters[p.peer_id] = (1000, 2000)
+        st = a.state.peer(p.peer_id)
+        st["baseline_rx"] = 100
+        st["baseline_tx"] = 200
+        st["baseline_exempt_up"] = 10
+        st["baseline_exempt_down"] = 20
+        st["traffic_limit_down_bytes"] = 1024
+        st["traffic_limit_up_bytes"] = 2048
+        st["overlimit_mode"] = "throttle"
+        rows = a.build_users_export_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["peer_id"], "*9")
+        self.assertEqual(rows[0]["traffic_limit_down_bytes"], 1024)
+        self.assertEqual(rows[0]["traffic_limit_up_bytes"], 2048)
+        self.assertEqual(rows[0]["overlimit_mode"], "throttle")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1139,9 +1139,11 @@ class App:
             if self.sort_key == "interface":
                 return p.interface
             if self.sort_key == "down_used":
-                return max(0, p.tx - int(st.get("baseline_tx", p.tx)))
+                down_used, _ = self.peer_used_bytes(p, st)
+                return down_used
             if self.sort_key == "up_used":
-                return max(0, p.rx - int(st.get("baseline_rx", p.rx)))
+                _, up_used = self.peer_used_bytes(p, st)
+                return up_used
             if self.sort_key == "down_speed":
                 return p.down_speed_bps
             if self.sort_key == "up_speed":
@@ -1716,8 +1718,10 @@ class App:
 
     def peer_used_bytes(self, p: PeerView, st: Dict[str, Any]) -> Tuple[int, int]:
         # Accounted usage = peer counters minus exempt destination traffic counters.
-        base_rx = int(st.get("baseline_rx", p.rx) or p.rx)
-        base_tx = int(st.get("baseline_tx", p.tx) or p.tx)
+        base_rx_raw = st.get("baseline_rx")
+        base_tx_raw = st.get("baseline_tx")
+        base_rx = int(p.rx if base_rx_raw is None else base_rx_raw)
+        base_tx = int(p.tx if base_tx_raw is None else base_tx_raw)
         raw_up = max(0, p.rx - base_rx)
         raw_down = max(0, p.tx - base_tx)
         cur_ex_up, cur_ex_down = self.peer_exempt_counters.get(p.peer_id, (0, 0))

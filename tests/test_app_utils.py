@@ -145,6 +145,30 @@ invalid=just-text
         self.assertEqual(rows[0]["traffic_limit_up_bytes"], 2048)
         self.assertEqual(rows[0]["overlimit_mode"], "throttle")
 
+    def test_sort_down_used_uses_adjusted_usage(self):
+        with mock.patch.dict(os.environ, {"WG_TUI_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
+            a = app.App(DummyStdScr())
+        p1 = app.PeerView(peer_id="*1", interface="wireguard", ip="100.100.100.1", comment="A", rx=1000, tx=2000, disabled=False)
+        p2 = app.PeerView(peer_id="*2", interface="wireguard", ip="100.100.100.2", comment="B", rx=1000, tx=1500, disabled=False)
+        a.peers = [p1, p2]
+        # p1 raw down is bigger, but exempt subtraction makes it zero.
+        st1 = a.state.peer("*1")
+        st1["baseline_tx"] = 0
+        st1["baseline_rx"] = 0
+        st1["baseline_exempt_down"] = 0
+        st1["baseline_exempt_up"] = 0
+        a.peer_exempt_counters["*1"] = (0, 2000)
+        st2 = a.state.peer("*2")
+        st2["baseline_tx"] = 0
+        st2["baseline_rx"] = 0
+        st2["baseline_exempt_down"] = 0
+        st2["baseline_exempt_up"] = 0
+        a.peer_exempt_counters["*2"] = (0, 0)
+        a.sort_key = "down_used"
+        a.sort_desc = True
+        out = a.build_visible_peers()
+        self.assertEqual([x.peer_id for x in out], ["*2", "*1"])
+
 
 if __name__ == "__main__":
     unittest.main()

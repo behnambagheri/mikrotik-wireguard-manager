@@ -21,6 +21,7 @@ CFG_DNS = "100.100.100.100, 100.100.100.101"
 CFG_ALLOWED_IPS = "0.0.0.0/0"
 CFG_ENDPOINT_HOST = "77.74.202.60"
 CFG_KEEPALIVE = "25"
+CFG_EXEMPT_DST_LIST = "quota_exempt"
 
 
 def env_file_path() -> str:
@@ -321,6 +322,10 @@ class RouterOSClient:
         pid = self._rid(peer_id)
         self._request("PATCH", f"/interface/wireguard/peers/{pid}", {"disabled": "true" if disabled else "false"})
 
+    def update_peer_public_key(self, peer_id: str, public_key: str) -> None:
+        pid = self._rid(peer_id)
+        self._request("PATCH", f"/interface/wireguard/peers/{pid}", {"public-key": public_key})
+
     def create_peer(self, payload: Dict[str, Any]) -> None:
         self._request("PUT", "/interface/wireguard/peers", payload)
 
@@ -573,6 +578,9 @@ class ApiSslClient:
     def set_peer_disabled(self, peer_id: str, disabled: bool) -> None:
         self._cmd("/interface/wireguard/peers/set", {".id": peer_id, "disabled": "true" if disabled else "false"})
 
+    def update_peer_public_key(self, peer_id: str, public_key: str) -> None:
+        self._cmd("/interface/wireguard/peers/set", {".id": peer_id, "public-key": public_key})
+
     def create_peer(self, payload: Dict[str, Any]) -> None:
         self._cmd("/interface/wireguard/peers/add", payload)
 
@@ -665,6 +673,7 @@ class App:
         self.timeout_sec = 30.0
         self.cfg_dns = CFG_DNS
         self.cfg_endpoint_host = CFG_ENDPOINT_HOST
+        self.cfg_exempt_dst_list = os.environ.get("EXEMPT_TRAFFIC_DST_LIST", CFG_EXEMPT_DST_LIST).strip() or CFG_EXEMPT_DST_LIST
 
         self.stdscr = stdscr
         self.client: Optional[RouterOSClient] = None
@@ -677,6 +686,7 @@ class App:
         self.router_resource: Dict[str, Any] = {}
         self.interfaces: List[Dict[str, Any]] = []
         self.last_sample: Dict[str, Tuple[int, int, float]] = {}
+        self.peer_exempt_counters: Dict[str, Tuple[int, int]] = {}
         self.iface_last_sample: Dict[str, Tuple[int, int, float]] = {}
         self.iface_speed: Dict[str, Tuple[float, float]] = {}
         self.iface_baseline: Dict[str, Tuple[int, int]] = {}
@@ -884,6 +894,7 @@ class App:
             "  z            Reset usage baseline (since-now)",
             "  t            Set traffic policy (quota/period/mode)",
             "  s            Set normal speed limits",
+            "  r            Revoke client keypair and show new config",
             "  e / d        Enable / disable peer",
             "  v            Realtime speed view",
             "  x            Clear limits and policies",
@@ -949,6 +960,9 @@ class App:
         self.timeout_sec = timeout_sec
         self.cfg_dns = os.environ.get("DNS_SERVERS", CFG_DNS).strip() or CFG_DNS
         self.cfg_endpoint_host = os.environ.get("ENDPOINT_IP", CFG_ENDPOINT_HOST).strip() or CFG_ENDPOINT_HOST
+        self.cfg_exempt_dst_list = (
+            os.environ.get("EXEMPT_TRAFFIC_DST_LIST", CFG_EXEMPT_DST_LIST).strip() or CFG_EXEMPT_DST_LIST
+        )
         self.client = RouterOSClient(self.host, self.user, self.password, use_https=self.use_https, timeout_sec=self.timeout_sec)
 
     def select_profile_dialog(self) -> Optional[str]:
@@ -979,6 +993,7 @@ class App:
         transport = str(p.get("transport", "rest")).strip().lower()
         self.cfg_dns = p.get("dns_servers", CFG_DNS).strip() or CFG_DNS
         self.cfg_endpoint_host = p.get("endpoint_ip", CFG_ENDPOINT_HOST).strip() or CFG_ENDPOINT_HOST
+        self.cfg_exempt_dst_list = p.get("exempt_traffic_dst_list", self.cfg_exempt_dst_list).strip() or self.cfg_exempt_dst_list
         if transport in ("api_ssl", "api-ssl"):
             self.client = ApiSslClient(self.host, self.user, self.password, timeout_sec=self.timeout_sec, port=8729, use_ssl=True)
             self.status = f"Connected profile: {self.profile_name} ({self.host}) via api-ssl"
@@ -998,6 +1013,7 @@ class App:
         self.interfaces = []
         self.visible_peers = []
         self.last_sample = {}
+        self.peer_exempt_counters = {}
         self.iface_last_sample = {}
         self.iface_speed = {}
         self.iface_baseline = {}
@@ -1456,6 +1472,92 @@ class App:
             json.dump(payload, f, indent=2)
         return path
 
+    @staticmethod
+    def _row_bytes(row: Dict[str, Any]) -> int:
+        for k in ("bytes", "byte", "bytes-total"):
+            if k in row:
+                try:
+                    return int(row.get(k, 0) or 0)
+                except Exception:
+                    return 0
+        return 0
+
+    def exempt_rule_comments(self, p: PeerView) -> Tuple[str, str]:
+        base = p.comment or p.ip
+        return (
+            f"{base} | {p.peer_id} | wg-tui exempt up",
+            f"{base} | {p.peer_id} | wg-tui exempt down",
+        )
+
+    def get_peer_exempt_counters(self, p: PeerView, mangle_rows: Optional[List[Dict[str, Any]]] = None) -> Tuple[int, int]:
+        if mangle_rows is None:
+            mangle_rows = self.client.list_mangle() if self.client else []
+        up_comment, down_comment = self.exempt_rule_comments(p)
+        up_bytes = 0
+        down_bytes = 0
+        for r in mangle_rows or []:
+            c = str(r.get("comment", ""))
+            if c == up_comment:
+                up_bytes = self._row_bytes(r)
+            elif c == down_comment:
+                down_bytes = self._row_bytes(r)
+        return up_bytes, down_bytes
+
+    def ensure_exempt_counter_rules(self, p: PeerView) -> None:
+        if self.client is None:
+            return
+        mangle = self.client.list_mangle() or []
+        up_comment, down_comment = self.exempt_rule_comments(p)
+
+        up_found = None
+        down_found = None
+        for r in mangle:
+            c = str(r.get("comment", ""))
+            if c == up_comment:
+                up_found = r
+            elif c == down_comment:
+                down_found = r
+
+        up_payload = {
+            "chain": "forward",
+            "action": "passthrough",
+            "src-address": p.ip,
+            "dst-address-list": self.cfg_exempt_dst_list,
+            "comment": up_comment,
+            "disabled": "false",
+        }
+        down_payload = {
+            "chain": "forward",
+            "action": "passthrough",
+            "dst-address": p.ip,
+            "src-address-list": self.cfg_exempt_dst_list,
+            "comment": down_comment,
+            "disabled": "false",
+        }
+        if up_found:
+            self.client.patch_mangle(str(up_found.get(".id")), up_payload)
+        else:
+            self.client.create_mangle(up_payload)
+        if down_found:
+            self.client.patch_mangle(str(down_found.get(".id")), down_payload)
+        else:
+            self.client.create_mangle(down_payload)
+
+    def peer_used_bytes(self, p: PeerView, st: Dict[str, Any]) -> Tuple[int, int]:
+        # Accounted usage = peer counters minus exempt destination traffic counters.
+        base_rx = int(st.get("baseline_rx", p.rx) or p.rx)
+        base_tx = int(st.get("baseline_tx", p.tx) or p.tx)
+        raw_up = max(0, p.rx - base_rx)
+        raw_down = max(0, p.tx - base_tx)
+        cur_ex_up, cur_ex_down = self.peer_exempt_counters.get(p.peer_id, (0, 0))
+        base_ex_up = int(st.get("baseline_exempt_up", 0) or 0)
+        base_ex_down = int(st.get("baseline_exempt_down", 0) or 0)
+        ex_up = max(0, cur_ex_up - base_ex_up)
+        ex_down = max(0, cur_ex_down - base_ex_down)
+        up_used = max(0, raw_up - ex_up)
+        down_used = max(0, raw_down - ex_down)
+        return down_used, up_used
+
     def refresh_data(self, force: bool) -> None:
         try:
             t0 = time.time()
@@ -1464,13 +1566,21 @@ class App:
             self.router_resource = self.client.list_system_resource() or {}
             self.interfaces = self.client.list_interfaces() or []
             peers = self.client.list_peers()
+            mangle_rows = self.client.list_mangle() or []
+            self.peer_exempt_counters = {}
             now = time.time()
             for p in peers:
                 st = self.state.peer(p.peer_id)
+                ex_up, ex_down = self.get_peer_exempt_counters(p, mangle_rows)
+                self.peer_exempt_counters[p.peer_id] = (ex_up, ex_down)
                 if "baseline_rx" not in st:
                     st["baseline_rx"] = p.rx
                     st["baseline_tx"] = p.tx
                     st["baseline_at"] = now_ts()
+                if "baseline_exempt_up" not in st:
+                    st["baseline_exempt_up"] = ex_up
+                if "baseline_exempt_down" not in st:
+                    st["baseline_exempt_down"] = ex_down
 
                 prev = self.last_sample.get(p.peer_id)
                 if prev:
@@ -1518,8 +1628,7 @@ class App:
         for p in self.peers:
             st = self.state.peer(p.peer_id)
             self.maybe_rollover_window(p, st)
-            up_used = max(0, p.rx - int(st.get("baseline_rx", p.rx)))
-            down_used = max(0, p.tx - int(st.get("baseline_tx", p.tx)))
+            down_used, up_used = self.peer_used_bytes(p, st)
             up_lim = int(st.get("traffic_limit_up_bytes", 0) or 0)
             down_lim = int(st.get("traffic_limit_down_bytes", 0) or 0)
             exceeded = (up_lim > 0 and up_used >= up_lim) or (down_lim > 0 and down_used >= down_lim)
@@ -1579,6 +1688,9 @@ class App:
             return
         st["baseline_rx"] = p.rx
         st["baseline_tx"] = p.tx
+        ex_up, ex_down = self.peer_exempt_counters.get(p.peer_id, (0, 0))
+        st["baseline_exempt_up"] = ex_up
+        st["baseline_exempt_down"] = ex_down
         st["baseline_at"] = now_ts()
         if bool(st.get("overlimit_active", False)):
             try:
@@ -1660,8 +1772,7 @@ class App:
         for i, p in enumerate(shown):
             row_idx = self.top + i
             st = self.state.peer(p.peer_id)
-            d_used = max(0, p.tx - int(st.get("baseline_tx", p.tx)))
-            u_used = max(0, p.rx - int(st.get("baseline_rx", p.rx)))
+            d_used, u_used = self.peer_used_bytes(p, st)
             d_lim = int(st.get("traffic_limit_down_bytes", 0) or 0)
             u_lim = int(st.get("traffic_limit_up_bytes", 0) or 0)
             line = format_row([
@@ -1866,34 +1977,69 @@ class App:
         bh = 8
         y = max(1, (h - bh) // 2)
         x = max(1, (w - bw) // 2)
-        curses.echo()
         curses.curs_set(1)
         try:
             self.stdscr.nodelay(False)
             self.stdscr.timeout(-1)
-            self.draw_main()
-            self._draw_box(title, [label], "Enter=OK  Esc=Cancel  (? help)")
-            px = x + 2
-            py = y + 4
-            self.put(py, px, "> " + initial, self.c_header)
-            self.stdscr.move(py, px + 2 + len(initial))
-            self.stdscr.refresh()
-            max_len = max(1, bw - 6)
-            s = self.stdscr.getstr(py, px + 2, max_len)
-            if s is None:
-                return None
-            out = s.decode("utf-8").strip()
-            # Empty Enter accepts the suggested default value.
-            if out == "":
-                return initial.strip()
-            return out
+            value = initial
+            while True:
+                self._draw_box(title, [label], "Enter=OK  Esc=Cancel  (? help)")
+                px = x + 2
+                py = y + 4
+                max_len = max(1, bw - 6)
+                shown = value[:max_len]
+                self.put(py, px, " " * (bw - 4), self.c_normal)
+                self.put(py, px, "> " + shown, self.c_header)
+                cursor_x = min(px + 2 + len(shown), x + bw - 3)
+                self.stdscr.move(py, cursor_x)
+                self.stdscr.refresh()
+                ch = self.stdscr.getch()
+                if ch in (27,):
+                    return None
+                if ch in (10, 13, curses.KEY_ENTER):
+                    out = value.strip()
+                    if out == "":
+                        return initial.strip()
+                    return out
+                if ch in (curses.KEY_BACKSPACE, 127, 8):
+                    value = value[:-1]
+                    continue
+                if ch == ord("?"):
+                    self.show_help("dialog-input")
+                    continue
+                if ch < 0:
+                    continue
+                try:
+                    c = chr(ch)
+                except Exception:
+                    continue
+                if c.isprintable() and len(value) < max_len:
+                    value += c
         except Exception:
             return None
         finally:
-            curses.noecho()
             curses.curs_set(0)
             self.stdscr.nodelay(True)
             self.stdscr.timeout(200)
+
+    def config_dir_path(self) -> str:
+        return "client-configs"
+
+    def default_config_path(self, filename: str) -> str:
+        base = (filename or "").strip()
+        if not base:
+            base = "wg-client.conf"
+        if os.path.dirname(base):
+            return base
+        return os.path.join(self.config_dir_path(), base)
+
+    def normalize_config_save_path(self, path: str) -> str:
+        p = (path or "").strip()
+        if not p:
+            return self.default_config_path("wg-client.conf")
+        if os.path.dirname(p):
+            return p
+        return os.path.join(self.config_dir_path(), p)
 
     def show_config_dialog(self, title: str, content: str, default_filename: str = "wg-client.conf") -> None:
         # Full-screen plain-text viewer keeps manual selection/copy clean.
@@ -1928,12 +2074,17 @@ class App:
                 except Exception as e:
                     self.error = str(e)
             elif ch == ord("s"):
-                path = self.prompt_in_dialog("Save Config", "File path:", default_filename)
+                default_path = self.default_config_path(default_filename)
+                path = self.prompt_in_dialog("Save Config", "File path:", default_path)
                 if path:
                     try:
-                        with open(path, "w", encoding="utf-8") as f:
+                        final_path = self.normalize_config_save_path(path)
+                        folder = os.path.dirname(final_path)
+                        if folder:
+                            os.makedirs(folder, exist_ok=True)
+                        with open(final_path, "w", encoding="utf-8") as f:
                             f.write(content + "\n")
-                        self.status = f"Saved to {path}"
+                        self.status = f"Saved to {final_path}"
                         self.error = ""
                     except Exception as e:
                         self.error = f"Save failed: {e}"
@@ -2042,17 +2193,26 @@ class App:
                 self.error = f"No free IP found in {network}"
                 return
 
-            ip_in = self.prompt_in_dialog("Add Client", f"Client IP in {network}:", str(suggest))
-            if ip_in is None:
-                self.status = "Add cancelled"
-                return
-            ip_obj = ipaddress.ip_address(ip_in.strip())
-            if ip_obj not in network:
-                self.error = f"IP {ip_obj} is not in {network}"
-                return
-            if ip_obj in used:
-                self.error = f"IP {ip_obj} is already used"
-                return
+            ip_obj = None
+            while True:
+                ip_in = self.prompt_in_dialog("Add Client", f"Client IP in {network}:", str(suggest))
+                if ip_in is None:
+                    self.status = "Add cancelled"
+                    return
+                try:
+                    candidate = ipaddress.ip_address(ip_in.strip())
+                    if candidate not in network:
+                        self.error = f"IP {candidate} is not in {network}"
+                        continue
+                    if candidate in used:
+                        self.error = f"IP {candidate} is already used"
+                        continue
+                    ip_obj = candidate
+                    self.error = ""
+                    break
+                except Exception:
+                    self.error = f"Invalid IP: {ip_in}"
+                    continue
 
             comment = self.prompt_in_dialog("Add Client", "Client comment:", "")
             if comment is None:
@@ -2085,7 +2245,7 @@ class App:
                 f"Endpoint = {self.cfg_endpoint_host}:{listen_port}",
                 f"PersistentKeepalive = {CFG_KEEPALIVE}",
             ]
-            safe_name = slug(comment.strip() or str(ip_obj), max_len=32).replace("-", "_")
+            safe_name = slug(comment.strip() or str(ip_obj), max_len=32)
             self.show_config_dialog("Client Configuration", "\n".join(conf), default_filename=f"{safe_name}.conf")
         except Exception as e:
             self.error = f"Add failed: {e}"
@@ -2115,6 +2275,8 @@ class App:
                 self.set_enable(current, False)
             elif ch == ord("z"):
                 self.reset_usage(current)
+            elif ch == ord("r"):
+                self.revoke_client(current)
             elif ch == ord("v"):
                 self.realtime_view(current)
 
@@ -2122,10 +2284,7 @@ class App:
         self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
         st = self.state.peer(p.peer_id)
-        base_rx = int(st.get("baseline_rx", p.rx))
-        base_tx = int(st.get("baseline_tx", p.tx))
-        up_used = max(0, p.rx - base_rx)
-        down_used = max(0, p.tx - base_tx)
+        down_used, up_used = self.peer_used_bytes(p, st)
         mode = str(st.get("overlimit_mode", "disable"))
         state_attr = self.c_disabled if p.disabled else self.c_status
 
@@ -2186,6 +2345,7 @@ class App:
                 ("Traffic limit down", bytes_h(int(st.get("traffic_limit_down_bytes", 0))) if int(st.get("traffic_limit_down_bytes", 0) or 0) > 0 else "not set"),
                 ("Traffic limit up", bytes_h(int(st.get("traffic_limit_up_bytes", 0))) if int(st.get("traffic_limit_up_bytes", 0) or 0) > 0 else "not set"),
                 ("Traffic period", self.period_h(int(st.get("traffic_period_seconds", 0) or 0))),
+                ("Exclude dst list", self.cfg_exempt_dst_list or "not set"),
                 ("Over-limit mode", mode),
                 ("Over-limit down", bps_h(float(st.get("overlimit_speed_down_bps", 0))) if float(st.get("overlimit_speed_down_bps", 0) or 0) > 0 else "not set"),
                 ("Over-limit up", bps_h(float(st.get("overlimit_speed_up_bps", 0))) if float(st.get("overlimit_speed_up_bps", 0) or 0) > 0 else "not set"),
@@ -2197,7 +2357,7 @@ class App:
         )
 
         msg = self.error if self.error else self.status
-        actions = "Keys: z reset | t traffic policy | s speed | e enable | d disable | v realtime | x clear | b back | ? help"
+        actions = "Keys: z reset | t traffic policy | s speed | r revoke | e enable | d disable | v realtime | x clear | b back | ? help"
         self.put(h - 3, 0, actions[:w].ljust(w), self.c_header)
         self.put(h - 2, 0, ("-" * max(1, w))[:w], self.c_hint)
         self.put(h - 1, 0, msg[:w].ljust(w), self.c_error if self.error else self.c_status)
@@ -2207,6 +2367,13 @@ class App:
         st = self.state.peer(p.peer_id)
         st["baseline_rx"] = p.rx
         st["baseline_tx"] = p.tx
+        try:
+            self.ensure_exempt_counter_rules(p)
+            ex_up, ex_down = self.get_peer_exempt_counters(p)
+        except Exception:
+            ex_up, ex_down = self.peer_exempt_counters.get(p.peer_id, (0, 0))
+        st["baseline_exempt_up"] = ex_up
+        st["baseline_exempt_down"] = ex_down
         st["baseline_at"] = now_ts()
         try:
             self.install_remote_policy(p, st)
@@ -2342,10 +2509,24 @@ class App:
             self.uninstall_remote_policy(p)
             return
 
+        self.ensure_exempt_counter_rules(p)
+        ex_up, ex_down = self.get_peer_exempt_counters(p)
+        if "baseline_exempt_up" not in st:
+            st["baseline_exempt_up"] = ex_up
+        if "baseline_exempt_down" not in st:
+            st["baseline_exempt_down"] = ex_down
+
         check_name, reset_name = self.scheduler_names(p)
         # Scheduler comment stores compact mutable state for router-side enforcement.
-        # brx/btx: baseline counters, ov: over-limit mode active, db: disabled-by-policy.
-        state_comment = f"brx={int(st.get('baseline_rx', p.rx))};btx={int(st.get('baseline_tx', p.tx))};ov=0;db=0;"
+        # brx/btx: total baselines, bexu/bexd: exempt traffic baselines,
+        # ov: over-limit mode active, db: disabled-by-policy.
+        state_comment = (
+            f"brx={int(st.get('baseline_rx', p.rx))};"
+            f"btx={int(st.get('baseline_tx', p.tx))};"
+            f"bexu={int(st.get('baseline_exempt_up', ex_up))};"
+            f"bexd={int(st.get('baseline_exempt_down', ex_down))};"
+            "ov=0;db=0;"
+        )
         check_script = self.build_policy_check_script(p, st, check_name, reset_name)
         check_payload = {
             "name": check_name,
@@ -2386,6 +2567,17 @@ class App:
             found = self.get_scheduler_by_name(name)
             if found:
                 self.client.delete_scheduler(str(found.get(".id")))
+        self.remove_exempt_counter_rules(p)
+
+    def remove_exempt_counter_rules(self, p: PeerView) -> None:
+        if self.client is None:
+            return
+        mangle = self.client.list_mangle() or []
+        up_comment, down_comment = self.exempt_rule_comments(p)
+        for r in mangle:
+            c = str(r.get("comment", ""))
+            if c == up_comment or c == down_comment:
+                self.client.delete_mangle(str(r.get(".id")))
 
     def build_policy_check_script(self, p: PeerView, st: Dict[str, Any], check_name: str, reset_name: str) -> str:
         # Router-side minute loop:
@@ -2402,9 +2594,11 @@ class App:
         mcomment_down = f"{p.comment or p.ip} | {p.peer_id} | wg-tui mangle down"
         qcomment_up = f"{p.comment or p.ip} | {p.peer_id} | wg-tui queue up"
         qcomment_down = f"{p.comment or p.ip} | {p.peer_id} | wg-tui queue down"
+        ex_comment_up, ex_comment_down = self.exempt_rule_comments(p)
         qname_up = f"{sid}-{uniq}-up"
         qname_down = f"{sid}-{uniq}-down"
         trusted_comment = f"{p.comment or p.ip} | {p.peer_id} | wg-tui trusted-only"
+        exempt_list = self.cfg_exempt_dst_list
         mode = str(st.get("overlimit_mode", "disable") or "disable")
         lim_down = int(st.get("traffic_limit_down_bytes", 0) or 0)
         lim_up = int(st.get("traffic_limit_up_bytes", 0) or 0)
@@ -2424,7 +2618,9 @@ class App:
             f":local markUp {ros_q(mark_up)};:local markDown {ros_q(mark_down)};"
             f":local mcu {ros_q(mcomment_up)};:local mcd {ros_q(mcomment_down)};"
             f":local qcu {ros_q(qcomment_up)};:local qcd {ros_q(qcomment_down)};"
+            f":local ecu {ros_q(ex_comment_up)};:local ecd {ros_q(ex_comment_down)};"
             f":local qnu {ros_q(qname_up)};:local qnd {ros_q(qname_down)};"
+            f":local exList {ros_q(exempt_list)};"
             f":local tComment {ros_q(trusted_comment)};"
             ":local pf [/interface wireguard peers find where .id=$pid];"
             ":if ([:len $pf]=0) do={"
@@ -2433,17 +2629,26 @@ class App:
             ":error \"peer-missing\";};"
             ":local rx [:tonum [/interface wireguard peers get $pf rx]];"
             ":local tx [:tonum [/interface wireguard peers get $pf tx]];"
+            ":local exuRule [/ip firewall mangle find where comment=$ecu];"
+            ":if ([:len $exuRule]=0) do={/ip firewall mangle add chain=forward action=passthrough src-address=$pip dst-address-list=$exList comment=$ecu;:set exuRule [/ip firewall mangle find where comment=$ecu];};"
+            ":local exdRule [/ip firewall mangle find where comment=$ecd];"
+            ":if ([:len $exdRule]=0) do={/ip firewall mangle add chain=forward action=passthrough dst-address=$pip src-address-list=$exList comment=$ecd;:set exdRule [/ip firewall mangle find where comment=$ecd];};"
+            ":local exu [:tonum [/ip firewall mangle get $exuRule bytes]];"
+            ":local exd [:tonum [/ip firewall mangle get $exdRule bytes]];"
             ":local sf [/system scheduler find where name=$checkName];"
             ":local c [/system scheduler get $sf comment];"
             ":local p1 [:find $c \"brx=\"];:local p2 [:find $c \";btx=\"];"
-            ":local p3 [:find $c \";ov=\"];:local p4 [:find $c \";db=\"];"
-            ":if (($p1=nil) or ($p2=nil) or ($p3=nil) or ($p4=nil)) do={:set c (\"brx=\".$rx.\";btx=\".$tx.\";ov=0;db=0;\");/system scheduler set $sf comment=$c;};"
-            ":set p1 [:find $c \"brx=\"];:set p2 [:find $c \";btx=\"];:set p3 [:find $c \";ov=\"];:set p4 [:find $c \";db=\"];"
+            ":local p3 [:find $c \";bexu=\"];:local p4 [:find $c \";bexd=\"];"
+            ":local p5 [:find $c \";ov=\"];:local p6 [:find $c \";db=\"];"
+            ":if (($p1=nil) or ($p2=nil) or ($p3=nil) or ($p4=nil) or ($p5=nil) or ($p6=nil)) do={:set c (\"brx=\".$rx.\";btx=\".$tx.\";bexu=\".$exu.\";bexd=\".$exd.\";ov=0;db=0;\");/system scheduler set $sf comment=$c;};"
+            ":set p1 [:find $c \"brx=\"];:set p2 [:find $c \";btx=\"];:set p3 [:find $c \";bexu=\"];:set p4 [:find $c \";bexd=\"];:set p5 [:find $c \";ov=\"];:set p6 [:find $c \";db=\"];"
             ":local brx [:tonum [:pick $c ($p1+4) $p2]];"
             ":local btx [:tonum [:pick $c ($p2+5) $p3]];"
-            ":local ov [:tonum [:pick $c ($p3+4) $p4]];"
-            ":local db [:tonum [:pick $c ($p4+4) ([:len $c]-1)]];"
-            ":local uu ($rx-$brx);:local dd ($tx-$btx);"
+            ":local bexu [:tonum [:pick $c ($p3+6) $p4]];"
+            ":local bexd [:tonum [:pick $c ($p4+6) $p5]];"
+            ":local ov [:tonum [:pick $c ($p5+4) $p6]];"
+            ":local db [:tonum [:pick $c ($p6+4) ([:len $c]-1)]];"
+            ":local uu (($rx-$brx)-($exu-$bexu));:local dd (($tx-$btx)-($exd-$bexd));"
             ":if ($uu<0) do={:set uu 0;};:if ($dd<0) do={:set dd 0;};"
             ":local ex false;"
             ":if (($limU>0) and ($uu>=$limU)) do={:set ex true;};"
@@ -2466,7 +2671,7 @@ class App:
             "   };"
             "   :set ov 0;};"
             " :if (($db=1) and ([/interface wireguard peers get $pf disabled]=true)) do={/interface wireguard peers set $pf disabled=no;:set db 0;};"
-            " /system scheduler set $sf comment=(\"brx=\".$brx.\";btx=\".$btx.\";ov=\".$ov.\";db=\".$db.\";\");"
+            " /system scheduler set $sf comment=(\"brx=\".$brx.\";btx=\".$btx.\";bexu=\".$bexu.\";bexd=\".$bexd.\";ov=\".$ov.\";db=\".$db.\";\");"
             " :error \"ok\";};"
             ":if ($mode=\"disable\") do={:if ([/interface wireguard peers get $pf disabled]=false) do={/interface wireguard peers set $pf disabled=yes;:set db 1;};};"
             ":if ($mode=\"trusted_only\") do={"
@@ -2489,7 +2694,7 @@ class App:
             "     :if ([:len $qd]=0) do={/queue tree add name=$qnd parent=global packet-mark=$markDown max-limit=$ovD comment=$qcd;}"
             "     else={/queue tree set $qd name=$qnd parent=global packet-mark=$markDown max-limit=$ovD comment=$qcd;};};"
             "   :set ov 1;};};"
-            "/system scheduler set $sf comment=(\"brx=\".$brx.\";btx=\".$btx.\";ov=\".$ov.\";db=\".$db.\";\");"
+            "/system scheduler set $sf comment=(\"brx=\".$brx.\";btx=\".$btx.\";bexu=\".$bexu.\";bexd=\".$bexd.\";ov=\".$ov.\";db=\".$db.\";\");"
         )
 
     def build_policy_reset_script(self, p: PeerView, st: Dict[str, Any], check_name: str) -> str:
@@ -2499,13 +2704,24 @@ class App:
         # - re-enable peer if policy disabled it
         mode = str(st.get("overlimit_mode", "disable") or "disable")
         trusted_comment = f"{p.comment or p.ip} | {p.peer_id} | wg-tui trusted-only"
+        ex_comment_up, ex_comment_down = self.exempt_rule_comments(p)
         return (
             f":local pid {ros_q(p.peer_id)};:local checkName {ros_q(check_name)};"
             f":local mode {ros_q(mode)};:local tComment {ros_q(trusted_comment)};"
+            f":local exList {ros_q(self.cfg_exempt_dst_list)};"
+            f":local ecu {ros_q(ex_comment_up)};:local ecd {ros_q(ex_comment_down)};"
             ":local pf [/interface wireguard peers find where .id=$pid];"
             ":if ([:len $pf]=0) do={:error \"peer-missing\";};"
             ":local rx [:tonum [/interface wireguard peers get $pf rx]];"
             ":local tx [:tonum [/interface wireguard peers get $pf tx]];"
+            ":local pip [/interface wireguard peers get $pf allowed-address];"
+            ":set pip [:pick $pip 0 [:find $pip \"/\"]];"
+            ":local exuRule [/ip firewall mangle find where comment=$ecu];"
+            ":if ([:len $exuRule]=0) do={/ip firewall mangle add chain=forward action=passthrough src-address=$pip dst-address-list=$exList comment=$ecu;:set exuRule [/ip firewall mangle find where comment=$ecu];};"
+            ":local exdRule [/ip firewall mangle find where comment=$ecd];"
+            ":if ([:len $exdRule]=0) do={/ip firewall mangle add chain=forward action=passthrough dst-address=$pip src-address-list=$exList comment=$ecd;:set exdRule [/ip firewall mangle find where comment=$ecd];};"
+            ":local exu [:tonum [/ip firewall mangle get $exuRule bytes]];"
+            ":local exd [:tonum [/ip firewall mangle get $exdRule bytes]];"
             ":local sf [/system scheduler find where name=$checkName];"
             ":if ([:len $sf]=0) do={:error \"check-missing\";};"
             ":local c [/system scheduler get $sf comment];"
@@ -2514,7 +2730,7 @@ class App:
             ":if ($p4!=nil) do={:set db [:tonum [:pick $c ($p4+4) ([:len $c]-1)]];};"
             ":if (($db=1) and ([/interface wireguard peers get $pf disabled]=true)) do={/interface wireguard peers set $pf disabled=no;};"
             ":if ($mode=\"trusted_only\") do={/ip firewall filter remove [find where comment=$tComment];};"
-            "/system scheduler set $sf comment=(\"brx=\".$rx.\";btx=\".$tx.\";ov=0;db=0;\");"
+            "/system scheduler set $sf comment=(\"brx=\".$rx.\";btx=\".$tx.\";bexu=\".$exu.\";bexd=\".$exd.\";ov=0;db=0;\");"
         )
 
     def period_h(self, seconds: int) -> str:
@@ -2544,6 +2760,45 @@ class App:
             self.error = ""
         except Exception as e:
             self.error = str(e)
+
+    def revoke_client(self, p: PeerView) -> None:
+        if not self.confirm(f"Revoke key for '{p.comment or p.ip}' and generate new config?"):
+            self.status = "Revoke cancelled"
+            return
+        try:
+            priv, pub = self.generate_client_keypair()
+            self.client.update_peer_public_key(p.peer_id, pub)
+            self.refresh_data(force=True)
+
+            server_pub = ""
+            listen_port = "13231"
+            ifaces = self.client.list_wireguard_interfaces()
+            for iface in ifaces:
+                if str(iface.get("name", "")) == p.interface:
+                    server_pub = str(iface.get("public-key", "")).strip()
+                    listen_port = str(iface.get("listen-port", "13231"))
+                    break
+            if not server_pub:
+                server_pub = "REPLACE_WITH_SERVER_PUBLIC_KEY"
+
+            conf = [
+                "[Interface]",
+                f"PrivateKey = {priv}",
+                f"Address = {p.ip}/32",
+                f"DNS = {self.cfg_dns}",
+                "",
+                "[Peer]",
+                f"PublicKey = {server_pub}",
+                f"AllowedIPs = {CFG_ALLOWED_IPS}",
+                f"Endpoint = {self.cfg_endpoint_host}:{listen_port}",
+                f"PersistentKeepalive = {CFG_KEEPALIVE}",
+            ]
+            safe_name = slug((p.comment or p.ip) + "-revoked", max_len=40)
+            self.show_config_dialog("Revoked Client - New Configuration", "\n".join(conf), default_filename=f"{safe_name}.conf")
+            self.status = f"Client revoked: {p.comment or p.ip}"
+            self.error = ""
+        except Exception as e:
+            self.error = f"Revoke failed: {e}"
 
     def realtime_view(self, p: PeerView) -> None:
         while True:

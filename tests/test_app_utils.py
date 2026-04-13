@@ -101,6 +101,29 @@ invalid=just-text
         filtered_rows = a.build_visible_peers()
         self.assertEqual([p.peer_id for p in filtered_rows], ["*2"])
 
+    def test_default_and_normalized_config_save_path(self):
+        with mock.patch.dict(os.environ, {"WG_TUI_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
+            a = app.App(DummyStdScr())
+        self.assertEqual(a.default_config_path("alice.conf"), "client-configs/alice.conf")
+        self.assertEqual(a.default_config_path("nested/alice.conf"), "nested/alice.conf")
+        self.assertEqual(a.normalize_config_save_path("bob.conf"), "client-configs/bob.conf")
+        self.assertEqual(a.normalize_config_save_path("nested/bob.conf"), "nested/bob.conf")
+
+    def test_peer_used_bytes_subtracts_exempt_counters(self):
+        with mock.patch.dict(os.environ, {"WG_TUI_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
+            a = app.App(DummyStdScr())
+        p = app.PeerView(peer_id="*7", interface="wireguard", ip="100.100.100.7", comment="User7", rx=1_000_000, tx=2_000_000, disabled=False)
+        st = {
+            "baseline_rx": 100_000,
+            "baseline_tx": 200_000,
+            "baseline_exempt_up": 10_000,
+            "baseline_exempt_down": 20_000,
+        }
+        a.peer_exempt_counters[p.peer_id] = (110_000, 220_000)
+        down_used, up_used = a.peer_used_bytes(p, st)
+        self.assertEqual(up_used, 800_000)   # (1_000_000-100_000) - (110_000-10_000)
+        self.assertEqual(down_used, 1_600_000)  # (2_000_000-200_000) - (220_000-20_000)
+
 
 if __name__ == "__main__":
     unittest.main()

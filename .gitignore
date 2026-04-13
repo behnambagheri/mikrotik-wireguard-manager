@@ -6,3 +6,5 @@ LOCAL_NOTES.md
 *.csv
 *.json
 .idea
+*.conf
+client-configs/

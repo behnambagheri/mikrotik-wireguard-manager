@@ -5,6 +5,8 @@
 
 Use this terminal application to manage your MikroTik RouterOS WireGuard users across multiple routers.
 
+Web mode is available with API + browser UI.
+
 ## Features
 
 - Select your router profile at startup (`.env` profiles)
@@ -43,6 +45,26 @@ Run:
 ```bash
 python3 wg_tui.py
 ```
+
+Web:
+
+```bash
+pip install -r requirements-web.txt
+PYTHONPATH=src python3 -m wg_users_tui.web_cli --host 0.0.0.0 --port 8088
+```
+
+Then open `http://127.0.0.1:8088`.
+
+Web highlights:
+
+- Router profile switching without restart
+- Dashboard cards (CPU/memory/disk/bandwidth) + interface live table
+- Clients table with search, disabled-only filter, clickable sort columns
+- Full selected-client details panel and all management actions
+- Add client with optional speed/quota/policy inputs
+- Diagnostics panel
+- Auto refresh control
+- Users and dashboard exports (JSON/PDF/CSV)
 
 ## Configuration
 
@@ -95,5 +117,9 @@ Press `?` on any screen.
 - `wg_tui.py` compatibility launcher
 - `src/wg_users_tui/app.py` core TUI + RouterOS logic
 - `src/wg_users_tui/cli.py` CLI entry/help
+- `src/wg_users_tui/web.py` FastAPI web API + static UI mount
+- `src/wg_users_tui/web_api.py` web backend manager (reuses same engine logic)
+- `src/wg_users_tui/web_cli.py` web server runner
+- `src/wg_users_tui/web_static/index.html` web UI
 - `src/wg_users_tui/__main__.py` module entrypoint
 - `src/wg_users_tui/__init__.py` package metadata

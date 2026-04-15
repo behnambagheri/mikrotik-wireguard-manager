@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MikroTik WireGuard Manager - Web</title>
+  <style>
+    :root {
+      --bg: #080f1d;
+      --panel: #111a2f;
+      --panel2: #0d1629;
+      --line: #2a3552;
+      --text: #e9efff;
+      --muted: #9aa9ca;
+      --accent: #4aa4ff;
+      --ok: #1ac77c;
+      --warn: #ffbf47;
+      --bad: #ff6d82;
+      --disabled: #d77ca2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      background: radial-gradient(1200px 600px at 80% -10%, #1b2950 0%, var(--bg) 55%);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+    .wrap { max-width: 1650px; margin: 0 auto; padding: 14px; }
+    h1 { margin: 0; font-size: 18px; color: var(--accent); }
+    .subtitle { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .panel {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .topbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    .grid2 { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    .grid3 { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    @media (min-width: 1100px) {
+      .grid2 { grid-template-columns: 1.1fr .9fr; }
+      .grid3 { grid-template-columns: 1fr 1fr 1fr; }
+    }
+    .grid2 > .panel, .grid3 > .panel { min-width: 0; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row + .row { margin-top: 8px; }
+    .spacer { flex: 1; }
+    input, select, button, textarea {
+      background: #0f1830;
+      border: 1px solid #2f3b5c;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 7px 8px;
+      font-size: 12px;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: #4b6297; }
+    button.danger { border-color: #82434f; color: #ffd7df; }
+    button.ghost { color: var(--muted); }
+    .meta { color: var(--muted); font-size: 12px; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+    .k { color: var(--muted); font-size: 11px; }
+    .v { font-size: 14px; margin-top: 3px; }
+    .bar { height: 10px; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #1bbf78, #4aa4ff); }
+    .table-wrap {
+      max-height: 440px;
+      max-width: 100%;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .wide-table { min-width: 1200px; }
+    th, td { border-bottom: 1px solid #202d49; padding: 6px; text-align: left; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #121d35; color: var(--muted); cursor: pointer; }
+    tr.selected { background: #1a2a4e; outline: 1px solid #4870ba; }
+    tr.disabled { color: var(--disabled); }
+    textarea { width: 100%; min-height: 150px; }
+    .kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 8px; font-size: 12px; }
+    .kv div:nth-child(odd) { color: var(--muted); }
+    .diag-ok { color: var(--ok); }
+    .diag-bad { color: var(--bad); }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(6, 10, 20, 0.72);
+      z-index: 50;
+      padding: 16px;
+    }
+    .modal.show { display: flex; }
+    .modal-card {
+      width: min(1200px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .modal-lg { width: min(1500px, 98vw); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MikroTik WireGuard Manager - Web</h1>
+    <div class="subtitle">Dashboard, clients, diagnostics, exports, and policy actions</div>
+
+    <div class="panel topbar">
+      <strong>Router</strong>
+      <select id="profileSelect"></select>
+      <button onclick="selectProfile()">Switch</button>
+      <button onclick="refreshAll()">Refresh</button>
+      <span class="spacer"></span>
+      <label class="meta">Auto</label>
+      <select id="autoSec">
+        <option value="0">off</option>
+        <option value="2">2s</option>
+        <option value="5" selected>5s</option>
+        <option value="10">10s</option>
+      </select>
+      <button onclick="toggleAuto()" id="autoBtn">Start</button>
+      <span class="pill" id="statusBar">status: ready</span>
+    </div>
+
+    <div class="grid2" style="margin-top:12px;">
+      <div class="panel">
+        <div class="row">
+          <strong>Dashboard</strong>
+          <span class="spacer"></span>
+          <button class="ghost" onclick="exportDashJson()">Export dashboard JSON</button>
+          <button class="ghost" onclick="exportDashCsv()">Export dashboard CSV</button>
+        </div>
+        <div class="cards" style="margin-top:8px;">
+          <div class="card"><div class="k">CPU</div><div class="v" id="cpuVal">-</div><div class="bar"><span id="cpuBar" style="width:0%"></span></div></div>
+          <div class="card"><div class="k">Memory Used</div><div class="v" id="memVal">-</div><div class="bar"><span id="memBar" style="width:0%"></span></div></div>
+          <div class="card"><div class="k">Disk Used</div><div class="v" id="diskVal">-</div><div class="bar"><span id="diskBar" style="width:0%"></span></div></div>
+          <div class="card"><div class="k">Total Bandwidth</div><div class="v" id="bwVal">-</div></div>
+        </div>
+        <div class="row meta" id="overviewLine" style="margin-top:8px;"></div>
+        <div class="row" id="alerts" style="margin-top:8px;"></div>
+
+        <div class="row" style="margin-top:10px;"><strong>Interfaces</strong></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th onclick="setIfSort('name')">Name</th>
+                <th onclick="setIfSort('type')">Type</th>
+                <th onclick="setIfSort('running')">Running</th>
+                <th onclick="setIfSort('rx_bps')">RX</th>
+                <th onclick="setIfSort('tx_bps')">TX</th>
+                <th onclick="setIfSort('combined_bps')">Total</th>
+                <th onclick="setIfSort('window_usage_bytes')">Window Usage</th>
+              </tr>
+            </thead>
+            <tbody id="ifStatsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="row"><strong>Diagnostics</strong><span class="spacer"></span><button onclick="runDiagnostics()">Run</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Profile</th><th>Router</th><th>Status</th><th>Ports</th><th>Detail</th></tr></thead>
+            <tbody id="diagBody"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:10px;"><strong>WG Health</strong></div>
+        <div id="wgHealth" class="meta"></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:12px;">
+        <div class="row">
+          <strong>Clients</strong>
+          <span id="clientsCount" class="pill"></span>
+          <span class="spacer"></span>
+          <input id="searchBox" placeholder="Search name/ip/interface/peer id" oninput="renderClients()" style="min-width:260px" />
+          <label class="meta"><input id="disabledOnly" type="checkbox" onchange="renderClients()" /> disabled only</label>
+        </div>
+        <div class="row" style="margin-top:10px; margin-bottom:10px;">
+          <button class="ghost" onclick="selectAllVisible()">Select visible</button>
+          <button class="ghost" onclick="clearBatch()">Clear selection</button>
+        <button onclick="openModal('addModal')">Add Client</button>
+        <button onclick="openModal('actionsModal'); refreshActionsModal()">Actions</button>
+        <button onclick="exportUsersJson()">Export users JSON</button>
+        <button onclick="exportUsersPdf()">Export users PDF</button>
+      </div>
+      <div class="table-wrap">
+        <table class="wide-table">
+          <thead>
+            <tr>
+              <th>Sel</th>
+              <th onclick="setSort('name')">Name</th>
+              <th onclick="setSort('ip')">IP</th>
+              <th onclick="setSort('interface')">Iface</th>
+              <th onclick="setSort('state')">State</th>
+              <th onclick="setSort('download_since_now_bytes')">Down</th>
+              <th onclick="setSort('upload_since_now_bytes')">Up</th>
+              <th onclick="setSort('down_speed_bps')">DSpd</th>
+              <th onclick="setSort('up_speed_bps')">USpd</th>
+              <th onclick="setSort('traffic_limit_down_bytes')">DLim</th>
+              <th onclick="setSort('traffic_limit_up_bytes')">ULim</th>
+              <th onclick="setSort('traffic_period_seconds')">Period</th>
+              <th onclick="setSort('overlimit_mode')">OMode</th>
+              <th onclick="setSort('overlimit_speed_down_bps')">ODown</th>
+              <th onclick="setSort('overlimit_speed_up_bps')">OUp</th>
+              <th onclick="setSort('overlimit_active')">OAct</th>
+              <th onclick="setSort('speed_limit_down_bps')">SLimD</th>
+              <th onclick="setSort('speed_limit_up_bps')">SLimU</th>
+            </tr>
+          </thead>
+          <tbody id="clientsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="addModal">
+    <div class="modal-card">
+      <div class="row"><strong>Add Client</strong><span class="spacer"></span><button class="ghost" onclick="closeModal('addModal')">Close</button></div>
+      <div class="row">
+        <select id="addIface" style="min-width:180px;"></select>
+        <button onclick="suggestIp()">Suggest IP</button>
+        <input id="addIp" placeholder="IP" />
+        <input id="addComment" placeholder="Comment" style="min-width:240px" />
+      </div>
+      <div class="row">
+        <input id="addSpeedDown" placeholder="Speed down Mbps (optional)" />
+        <input id="addSpeedUp" placeholder="Speed up Mbps (optional)" />
+        <input id="addLimitDown" placeholder="Limit down GB (optional)" />
+        <input id="addLimitUp" placeholder="Limit up GB (optional)" />
+      </div>
+      <div class="row">
+        <input id="addPeriod" placeholder="Period (optional: day/2h/0)" />
+        <select id="addMode">
+          <option value="">Over-limit mode (optional)</option>
+          <option value="disable">disable</option>
+          <option value="throttle">throttle</option>
+          <option value="trusted_only">trusted_only</option>
+        </select>
+        <input id="addOverDown" placeholder="Over down Mbps (optional)" />
+        <input id="addOverUp" placeholder="Over up Mbps (optional)" />
+        <button onclick="addClient()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="actionsModal">
+    <div class="modal-card modal-lg">
+      <div class="row"><strong>Actions</strong><span class="spacer"></span><span class="pill" id="selectedPeer">none</span><button class="ghost" onclick="closeModal('actionsModal')">Close</button></div>
+      <div class="row" style="margin-top:6px;">
+        <span class="pill" id="batchCount">0 selected</span>
+        <span class="meta" id="actionsMode">mode: none</span>
+      </div>
+      <div id="actionsSelectedList" style="margin-top:8px;"></div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnActionEnable" onclick="actionSetEnable(true)">Enable</button>
+        <button id="btnActionDisable" onclick="actionSetEnable(false)">Disable</button>
+        <button id="btnActionReset" onclick="actionResetUsage()">Reset usage</button>
+        <button id="btnActionClear" onclick="actionClearLimits()">Clear limits</button>
+        <button id="btnActionRevoke" onclick="actionRevoke()">Revoke</button>
+        <button id="btnActionDelete" class="danger" onclick="actionDelete()">Delete</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input id="spDown" placeholder="Speed down Mbps" />
+        <input id="spUp" placeholder="Speed up Mbps" />
+        <button id="btnActionSetSpeed" onclick="actionSetSpeed()">Set speed</button>
+      </div>
+      <div class="row">
+        <input id="plDown" placeholder="Limit down GB" />
+        <input id="plUp" placeholder="Limit up GB" />
+        <input id="plPeriod" placeholder="Period (day/2h/0)" />
+        <select id="plMode">
+          <option value="disable">disable</option>
+          <option value="throttle">throttle</option>
+          <option value="trusted_only">trusted_only</option>
+        </select>
+        <input id="plOverDown" placeholder="Over down Mbps" />
+        <input id="plOverUp" placeholder="Over up Mbps" />
+        <button id="btnActionSetPolicy" onclick="actionSetPolicy()">Set policy</button>
+      </div>
+      <div class="row meta">If one client is selected: single change. If multiple are selected: batch change.</div>
+      <div id="actionsConfigSection">
+        <div class="row" style="margin-top:10px;"><strong>Config Output</strong><span class="spacer"></span><button id="btnCopyConfig" onclick="copyConfig()">Copy</button><button id="btnSaveConfig" onclick="downloadConfig()">Save file</button></div>
+        <div style="height:10px"></div>
+        <textarea id="configOut" placeholder="New client/revoke configuration appears here."></textarea>
+      </div>
+    </div>
+  </div>
+
+  </div>
+
+  <script>
+    let selectedPeerId = null;
+    let clientsCache = [];
+    let sortKey = 'name';
+    let sortDesc = false;
+    let ifSortKey = 'combined_bps';
+    let ifSortDesc = true;
+    let autoTimer = null;
+    let lastConfigFilename = 'client.conf';
+    const selectedBatch = new Set();
+
+    function txt(v) { return (v === null || v === undefined || v === '') ? 'not set' : String(v); }
+    function val(id) { return document.getElementById(id).value.trim(); }
+    function numOrNull(id) { const v = val(id); return v === '' ? null : Number(v); }
+    function num(id) { const v = val(id); return v === '' ? 0 : Number(v); }
+    function byId(id) { return document.getElementById(id); }
+    function openModal(id) {
+      const m = byId(id);
+      if (m) m.classList.add('show');
+    }
+    function closeModal(id) {
+      const m = byId(id);
+      if (m) m.classList.remove('show');
+    }
+    function hBytes(n) {
+      if (!n || n <= 0) return '0 B';
+      const units = ['B','KB','MB','GB','TB'];
+      let x = Number(n), i = 0;
+      while (x >= 1024 && i < units.length - 1) { x /= 1024; i += 1; }
+      if (i === 0) return `${Math.round(x)} ${units[i]}`;
+      const s = x.toFixed(1).replace(/\.0$/, '');
+      return `${s} ${units[i]}`;
+    }
+    function hBps(n) {
+      const v = Number(n || 0);
+      if (v <= 0) return '0 bps';
+      const compact = (x) => x.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      if (v >= 1_000_000_000) return `${compact(v / 1_000_000_000)} Gbps`;
+      if (v >= 1_000_000) return `${compact(v / 1_000_000)} Mbps`;
+      if (v >= 1_000) return `${compact(v / 1_000)} Kbps`;
+      return `${Math.round(v)} bps`;
+    }
+    function hPeriod(sec) {
+      const s = Number(sec || 0);
+      if (s <= 0) return 'not set';
+      if (s % 86400 === 0) {
+        const d = s / 86400;
+        return d === 1 ? '1 day' : `${d} days`;
+      }
+      if (s % 3600 === 0) {
+        const h = s / 3600;
+        return h === 1 ? '1 hour' : `${h} hours`;
+      }
+      if (s % 60 === 0) {
+        const m = s / 60;
+        return m === 1 ? '1 minute' : `${m} minutes`;
+      }
+      return `${s}s`;
+    }
+    function periodInputFromSeconds(sec) {
+      const s = Number(sec || 0);
+      if (s <= 0) return '';
+      if (s % (7 * 86400) === 0) return `${s / (7 * 86400)}w`;
+      if (s % 86400 === 0) return `${s / 86400}d`;
+      if (s % 3600 === 0) return `${s / 3600}h`;
+      if (s % 60 === 0) return `${s / 60}m`;
+      return `${s}s`;
+    }
+    function fmtFormNumber(v) {
+      const n = Number(v || 0);
+      if (!Number.isFinite(n)) return '';
+      const s = n.toFixed(2);
+      return s.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+
+    async function api(path, options = {}) {
+      const resp = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!resp.ok) {
+        let detail = resp.statusText;
+        try { detail = (await resp.json()).detail || detail; } catch (_) {}
+        throw new Error(detail);
+      }
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return resp.json();
+      return resp.blob();
+    }
+
+    function setStatus(msg, bad = false) {
+      const el = byId('statusBar');
+      el.textContent = `status: ${msg}`;
+      el.className = `pill ${bad ? 'bad' : 'meta'}`;
+    }
+
+    function setSort(key) {
+      if (sortKey === key) sortDesc = !sortDesc;
+      else { sortKey = key; sortDesc = false; }
+      renderClients();
+    }
+    function refreshBatchCount() {
+      const el = byId('batchCount');
+      if (el) el.textContent = `${selectedBatch.size} selected`;
+      refreshActionsModal();
+    }
+    function setIfSort(key) {
+      if (ifSortKey === key) ifSortDesc = !ifSortDesc;
+      else {
+        ifSortKey = key;
+        // For numeric bandwidth/usage columns, descending is usually more useful.
+        ifSortDesc = ['rx_bps', 'tx_bps', 'combined_bps', 'window_usage_bytes'].includes(key);
+      }
+      loadInterfaceStats();
+    }
+
+    function selectedRows() {
+      return Array.from(selectedBatch);
+    }
+
+    function setActionButtonsState(mode) {
+      const isNone = mode === 'none';
+      const isBatch = mode === 'batch';
+      const allButtons = [
+        'btnActionEnable', 'btnActionDisable', 'btnActionReset', 'btnActionClear',
+        'btnActionRevoke', 'btnActionDelete', 'btnActionSetSpeed', 'btnActionSetPolicy'
+      ];
+      const singleOnly = ['btnActionRevoke'];
+      for (const id of allButtons) {
+        const el = byId(id);
+        if (el) el.disabled = isNone;
+      }
+      for (const id of singleOnly) {
+        const el = byId(id);
+        if (el) el.disabled = isNone || isBatch;
+      }
+      const revokeBtn = byId('btnActionRevoke');
+      if (revokeBtn) revokeBtn.style.display = isBatch ? 'none' : '';
+      const cfg = byId('actionsConfigSection');
+      if (cfg) cfg.style.display = mode === 'single' ? '' : 'none';
+    }
+
+    function actionPeerIds() {
+      const ids = selectedRows();
+      if (ids.length > 0) return ids;
+      if (selectedPeerId) return [selectedPeerId];
+      return [];
+    }
+
+    function refreshActionsModal() {
+      const ids = actionPeerIds();
+      const rows = ids.map((id) => clientsCache.find((x) => x.peer_id === id)).filter(Boolean);
+      const list = byId('actionsSelectedList');
+      if (!rows.length) {
+        byId('selectedPeer').textContent = 'none';
+        byId('actionsMode').textContent = 'mode: none';
+        list.innerHTML = '<div class="meta">No client selected.</div>';
+        setActionButtonsState('none');
+        return;
+      }
+      byId('selectedPeer').textContent = rows.length === 1 ? `${txt(rows[0].name)} (${rows[0].peer_id})` : `${rows.length} clients`;
+      const mode = rows.length === 1 ? 'single' : 'batch';
+      byId('actionsMode').textContent = `mode: ${mode}`;
+      setActionButtonsState(mode);
+      list.innerHTML = `
+        <div class="table-wrap" style="max-height:180px;">
+          <table>
+            <thead><tr><th>Comment</th><th>Interface</th><th>IP</th></tr></thead>
+            <tbody>
+              ${rows.map((r) => `<tr><td>${txt(r.name)}</td><td>${txt(r.interface)}</td><td>${txt(r.ip)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      if (rows.length === 1) {
+        const c = rows[0];
+        byId('spDown').value = c.speed_limit_down_bps > 0 ? fmtFormNumber(Number(c.speed_limit_down_bps) / 1_000_000) : '';
+        byId('spUp').value = c.speed_limit_up_bps > 0 ? fmtFormNumber(Number(c.speed_limit_up_bps) / 1_000_000) : '';
+        byId('plDown').value = c.traffic_limit_down_bytes > 0 ? fmtFormNumber(Number(c.traffic_limit_down_bytes) / (1024 * 1024 * 1024)) : '';
+        byId('plUp').value = c.traffic_limit_up_bytes > 0 ? fmtFormNumber(Number(c.traffic_limit_up_bytes) / (1024 * 1024 * 1024)) : '';
+        byId('plPeriod').value = periodInputFromSeconds(c.traffic_period_seconds);
+        byId('plMode').value = (c.overlimit_mode || 'disable');
+        byId('plOverDown').value = c.overlimit_speed_down_bps > 0 ? fmtFormNumber(Number(c.overlimit_speed_down_bps) / 1_000_000) : '';
+        byId('plOverUp').value = c.overlimit_speed_up_bps > 0 ? fmtFormNumber(Number(c.overlimit_speed_up_bps) / 1_000_000) : '';
+      }
+    }
+
+    function selectPeer(peerId) {
+      selectedPeerId = peerId;
+      const c = clientsCache.find(x => x.peer_id === peerId);
+      byId('selectedPeer').textContent = c ? `${txt(c.name)} (${peerId})` : peerId;
+      refreshActionsModal();
+      renderClients();
+    }
+
+    function renderClients() {
+      let rows = [...clientsCache];
+      const q = val('searchBox').toLowerCase();
+      const disabledOnly = byId('disabledOnly').checked;
+      if (q) {
+        rows = rows.filter(c => (`${txt(c.name)} ${txt(c.ip)} ${txt(c.interface)} ${txt(c.peer_id)}`).toLowerCase().includes(q));
+      }
+      if (disabledOnly) rows = rows.filter(c => c.state === 'disabled');
+
+      rows.sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (typeof av === 'number' && typeof bv === 'number') return sortDesc ? (bv - av) : (av - bv);
+        const aa = txt(av).toLowerCase();
+        const bb = txt(bv).toLowerCase();
+        if (sortKey === 'ip') {
+          const aParts = aa.split('.').map(n => parseInt(n || '0', 10));
+          const bParts = bb.split('.').map(n => parseInt(n || '0', 10));
+          for (let i = 0; i < 4; i += 1) {
+            const d = (aParts[i] || 0) - (bParts[i] || 0);
+            if (d !== 0) return sortDesc ? -d : d;
+          }
+          return 0;
+        }
+        if (aa < bb) return sortDesc ? 1 : -1;
+        if (aa > bb) return sortDesc ? -1 : 1;
+        return 0;
+      });
+
+      const body = byId('clientsBody');
+      body.innerHTML = '';
+      byId('clientsCount').textContent = `${rows.length} users | selected: ${selectedBatch.size} | sort: ${sortKey} ${sortDesc ? 'desc' : 'asc'}`;
+      refreshBatchCount();
+      for (const c of rows) {
+        const tr = document.createElement('tr');
+        tr.className = `${selectedPeerId === c.peer_id ? 'selected ' : ''}${c.state === 'disabled' ? 'disabled' : ''}`;
+        tr.onclick = () => selectPeer(c.peer_id);
+        const checked = selectedBatch.has(c.peer_id) ? 'checked' : '';
+        tr.innerHTML = `
+          <td><input type="checkbox" ${checked} onclick="event.stopPropagation();toggleBatch('${c.peer_id}', this.checked)" /></td>
+          <td>${txt(c.name)}</td>
+          <td>${txt(c.ip)}</td>
+          <td>${txt(c.interface)}</td>
+          <td>${txt(c.state)}</td>
+          <td>${txt(c.download_since_now)}</td>
+          <td>${txt(c.upload_since_now)}</td>
+          <td>${txt(c.down_speed)}</td>
+          <td>${txt(c.up_speed)}</td>
+          <td>${c.traffic_limit_down_bytes > 0 ? hBytes(c.traffic_limit_down_bytes) : 'not set'}</td>
+          <td>${c.traffic_limit_up_bytes > 0 ? hBytes(c.traffic_limit_up_bytes) : 'not set'}</td>
+          <td>${hPeriod(c.traffic_period_seconds)}</td>
+          <td>${txt(c.overlimit_mode)}</td>
+          <td>${c.overlimit_speed_down_bps > 0 ? hBps(c.overlimit_speed_down_bps) : 'not set'}</td>
+          <td>${c.overlimit_speed_up_bps > 0 ? hBps(c.overlimit_speed_up_bps) : 'not set'}</td>
+          <td>${c.overlimit_active ? 'yes' : 'no'}</td>
+          <td>${c.speed_limit_down_bps > 0 ? hBps(c.speed_limit_down_bps) : 'not set'}</td>
+          <td>${c.speed_limit_up_bps > 0 ? hBps(c.speed_limit_up_bps) : 'not set'}</td>
+        `;
+        body.appendChild(tr);
+      }
+    }
+
+    function toggleBatch(peerId, checked) {
+      if (checked) selectedBatch.add(peerId);
+      else selectedBatch.delete(peerId);
+      byId('clientsCount').textContent = `${clientsCache.length} users | selected: ${selectedBatch.size} | sort: ${sortKey} ${sortDesc ? 'desc' : 'asc'}`;
+      refreshBatchCount();
+    }
+
+    function clearBatch() {
+      selectedBatch.clear();
+      renderClients();
+    }
+
+    function selectAllVisible() {
+      const q = val('searchBox').toLowerCase();
+      const disabledOnly = byId('disabledOnly').checked;
+      let rows = [...clientsCache];
+      if (q) rows = rows.filter(c => (`${txt(c.name)} ${txt(c.ip)} ${txt(c.interface)} ${txt(c.peer_id)}`).toLowerCase().includes(q));
+      if (disabledOnly) rows = rows.filter(c => c.state === 'disabled');
+      for (const c of rows) selectedBatch.add(c.peer_id);
+      renderClients();
+    }
+
+    async function loadProfiles() {
+      const data = await api('/api/profiles');
+      const sel = byId('profileSelect');
+      sel.innerHTML = '';
+      for (const p of data.profiles) {
+        const o = document.createElement('option');
+        o.value = p.name;
+        o.textContent = `${p.name} (${p.router_ip}) [${p.transport}]`;
+        if (p.name === data.current) o.selected = true;
+        sel.appendChild(o);
+      }
+    }
+
+    async function selectProfile() {
+      try {
+        await api('/api/profiles/select', { method: 'POST', body: JSON.stringify({ name: byId('profileSelect').value }) });
+        selectedPeerId = null;
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function loadOverview() {
+      const data = await api('/api/overview');
+      const rr = data.resource || {};
+      const cpu = Number(rr['cpu-load'] || 0);
+      const tm = Number(rr['total-memory'] || 0);
+      const fm = Number(rr['free-memory'] || 0);
+      const memPct = tm > 0 ? ((tm - fm) * 100 / tm) : 0;
+      const th = Number(rr['total-hdd-space'] || 0);
+      const fh = Number(rr['free-hdd-space'] || 0);
+      const diskPct = th > 0 ? ((th - fh) * 100 / th) : 0;
+
+      byId('cpuVal').textContent = `${cpu.toFixed(1)}%`;
+      byId('memVal').textContent = `${memPct.toFixed(1)}% (${hBytes(tm - fm)} / ${hBytes(tm)})`;
+      byId('diskVal').textContent = `${diskPct.toFixed(1)}% (${hBytes(th - fh)} / ${hBytes(th)})`;
+      byId('bwVal').textContent = `RX ${hBytes(data.bandwidth_bps.rx)}/s | TX ${hBytes(data.bandwidth_bps.tx)}/s`;
+      byId('cpuBar').style.width = `${Math.max(0, Math.min(100, cpu))}%`;
+      byId('memBar').style.width = `${Math.max(0, Math.min(100, memPct))}%`;
+      byId('diskBar').style.width = `${Math.max(0, Math.min(100, diskPct))}%`;
+
+      byId('overviewLine').textContent = `router=${data.profile}@${data.router} | version=${txt(rr.version)} | uptime=${txt(rr.uptime)} | poll=${Math.round(data.poll_latency_ms)}ms`;
+      byId('alerts').innerHTML = (data.alerts || []).length
+        ? data.alerts.map(a => `<span class="warn">${a}</span>`).join(' | ')
+        : '<span class="ok">No alerts</span>';
+      byId('wgHealth').innerHTML = (data.wg_health || []).map(x => `<div>${x}</div>`).join('') || '<div class="meta">No WG interfaces found</div>';
+    }
+
+    async function loadInterfaceStats() {
+      const data = await api('/api/interfaces/stats');
+      let rows = [...(data.items || [])];
+      rows.sort((a, b) => {
+        const av = a[ifSortKey];
+        const bv = b[ifSortKey];
+        const dir = ifSortDesc ? -1 : 1;
+        if (typeof av === 'number' && typeof bv === 'number') {
+          return (av - bv) * dir;
+        }
+        const aa = txt(av).toLowerCase();
+        const bb = txt(bv).toLowerCase();
+        if (aa < bb) return -1 * dir;
+        if (aa > bb) return 1 * dir;
+        return 0;
+      });
+      const body = byId('ifStatsBody');
+      body.innerHTML = '';
+      for (const i of rows) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${txt(i.name)}</td>
+          <td>${txt(i.type)}</td>
+          <td>${txt(i.running)}</td>
+          <td>${txt(i.rx_h)}</td>
+          <td>${txt(i.tx_h)}</td>
+          <td>${hBytes(i.combined_bps)}/s</td>
+          <td>${txt(i.window_usage_h)}</td>
+        `;
+        body.appendChild(tr);
+      }
+    }
+
+    async function loadInterfaces() {
+      const data = await api('/api/interfaces');
+      const sel = byId('addIface');
+      sel.innerHTML = '';
+      for (const i of data.items || []) {
+        const o = document.createElement('option');
+        o.value = i.name;
+        o.textContent = `${i.name} (listen:${i.listen_port || '?'})`;
+        sel.appendChild(o);
+      }
+    }
+
+    async function loadClients() {
+      const data = await api('/api/clients');
+      clientsCache = data.items || [];
+      const exists = new Set(clientsCache.map(x => x.peer_id));
+      for (const pid of Array.from(selectedBatch)) {
+        if (!exists.has(pid)) selectedBatch.delete(pid);
+      }
+      renderClients();
+      if (selectedPeerId) {
+        const c = clientsCache.find(x => x.peer_id === selectedPeerId) || null;
+        refreshActionsModal();
+        if (!c) {
+          byId('selectedPeer').textContent = 'none';
+          selectedPeerId = null;
+        }
+      } else {
+        refreshActionsModal();
+      }
+    }
+
+    async function runDiagnostics() {
+      try {
+        const data = await api('/api/diagnostics');
+        const body = byId('diagBody');
+        body.innerHTML = '';
+        for (const d of data.items || []) {
+          const cls = d.status === 'ok' ? 'diag-ok' : 'diag-bad';
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${txt(d.profile)}</td><td>${txt(d.router_ip)}</td><td class="${cls}">${txt(d.status)}</td><td>${txt(d.ports)}</td><td>${txt(d.detail)}</td>`;
+          body.appendChild(tr);
+        }
+        setStatus('diagnostics updated');
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function suggestIp() {
+      try {
+        const iface = byId('addIface').value;
+        const data = await api(`/api/interfaces/${encodeURIComponent(iface)}/suggest-ip`);
+        byId('addIp').value = data.ip;
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function addClient() {
+      try {
+        const body = {
+          interface: val('addIface'),
+          ip: val('addIp'),
+          comment: val('addComment'),
+          speed_down_mbps: numOrNull('addSpeedDown'),
+          speed_up_mbps: numOrNull('addSpeedUp'),
+          limit_down_gb: numOrNull('addLimitDown'),
+          limit_up_gb: numOrNull('addLimitUp'),
+          period: val('addPeriod') || null,
+          overlimit_mode: val('addMode') || null,
+          overlimit_down_mbps: numOrNull('addOverDown'),
+          overlimit_up_mbps: numOrNull('addOverUp'),
+        };
+        const out = await api('/api/clients', { method: 'POST', body: JSON.stringify(body) });
+        byId('configOut').value = out.config || '';
+        lastConfigFilename = out.filename || 'client.conf';
+        selectedPeerId = out.peer_id || null;
+        await refreshAll();
+        setStatus(`client created: ${out.peer_id || '?'}`);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    function ensurePeer() {
+      if (!selectedPeerId) throw new Error('Select a client first');
+      return selectedPeerId;
+    }
+
+    async function actionSetEnable(enabled) {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await toggleEnable(enabled);
+        return;
+      }
+      await batchSetEnableSelected(enabled);
+    }
+
+    async function actionDelete() {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await deleteClient();
+        return;
+      }
+      await batchDeleteSelected();
+    }
+
+    async function actionSetSpeed() {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await setSpeed();
+        return;
+      }
+      const out = await api('/api/batch/clients/speed', {
+        method: 'POST',
+        body: JSON.stringify({
+          peer_ids: ids,
+          down_mbps: num('spDown'),
+          up_mbps: num('spUp'),
+        }),
+      });
+      setStatus(`batch speed done: updated=${(out.updated || []).length}, skipped=${(out.skipped || []).length}`);
+      await refreshAll(false);
+    }
+
+    async function actionSetPolicy() {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await setPolicy();
+        return;
+      }
+      const out = await api('/api/batch/clients/policy', {
+        method: 'POST',
+        body: JSON.stringify({
+          peer_ids: ids,
+          down_gb: num('plDown'),
+          up_gb: num('plUp'),
+          period: val('plPeriod') || '0',
+          mode: val('plMode') || 'disable',
+          over_down_mbps: num('plOverDown'),
+          over_up_mbps: num('plOverUp'),
+        }),
+      });
+      setStatus(`batch policy done: updated=${(out.updated || []).length}, skipped=${(out.skipped || []).length}`);
+      await refreshAll(false);
+    }
+
+    async function actionResetUsage() {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await resetUsage();
+        return;
+      }
+      try {
+        const out = await api('/api/batch/clients/reset-usage', {
+          method: 'POST',
+          body: JSON.stringify({ peer_ids: ids }),
+        });
+        setStatus(`batch reset usage done: updated=${(out.updated || []).length}, skipped=${(out.skipped || []).length}`);
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function actionClearLimits() {
+      const ids = actionPeerIds();
+      if (!ids.length) { setStatus('Select at least one client', true); return; }
+      if (ids.length === 1) {
+        selectedPeerId = ids[0];
+        await clearLimits();
+        return;
+      }
+      try {
+        const out = await api('/api/batch/clients/clear-limits', {
+          method: 'POST',
+          body: JSON.stringify({ peer_ids: ids }),
+        });
+        setStatus(`batch clear limits done: updated=${(out.updated || []).length}, skipped=${(out.skipped || []).length}`);
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function actionRevoke() {
+      const ids = actionPeerIds();
+      if (ids.length !== 1) { setStatus('Revoke is single-client only', true); return; }
+      selectedPeerId = ids[0];
+      await revokeClient();
+    }
+
+    async function toggleEnable(enabled) {
+      try {
+        const peer = ensurePeer();
+        await api(`/api/clients/${encodeURIComponent(peer)}/enable`, { method: 'POST', body: JSON.stringify({ enabled }) });
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function resetUsage() {
+      try {
+        const peer = ensurePeer();
+        await api(`/api/clients/${encodeURIComponent(peer)}/reset-usage`, { method: 'POST' });
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function clearLimits() {
+      try {
+        const peer = ensurePeer();
+        await api(`/api/clients/${encodeURIComponent(peer)}/clear-limits`, { method: 'POST' });
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function revokeClient() {
+      try {
+        const peer = ensurePeer();
+        if (!confirm('Revoke selected client key and generate new config?')) return;
+        const out = await api(`/api/clients/${encodeURIComponent(peer)}/revoke`, { method: 'POST' });
+        byId('configOut').value = out.config || '';
+        lastConfigFilename = out.filename || 'client.conf';
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function deleteClient() {
+      try {
+        const peer = ensurePeer();
+        if (!confirm('Delete selected client?')) return;
+        await api(`/api/clients/${encodeURIComponent(peer)}`, { method: 'DELETE' });
+        selectedPeerId = null;
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function batchDeleteSelected() {
+      try {
+        const ids = selectedRows();
+        if (!ids.length) throw new Error('Select at least one client');
+        if (!confirm(`Delete ${ids.length} selected client(s)?`)) return;
+        const out = await api('/api/batch/clients/delete', { method: 'POST', body: JSON.stringify({ peer_ids: ids }) });
+        setStatus(`batch delete done: deleted=${(out.deleted || []).length}, skipped=${(out.skipped || []).length}`);
+        clearBatch();
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function batchSetEnableSelected(enabled) {
+      try {
+        const ids = selectedRows();
+        if (!ids.length) throw new Error('Select at least one client');
+        const out = await api('/api/batch/clients/enable', {
+          method: 'POST',
+          body: JSON.stringify({ peer_ids: ids, enabled }),
+        });
+        setStatus(`batch ${enabled ? 'enable' : 'disable'} done: updated=${(out.updated || []).length}, skipped=${(out.skipped || []).length}`);
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function setSpeed() {
+      try {
+        const peer = ensurePeer();
+        await api(`/api/clients/${encodeURIComponent(peer)}/speed`, {
+          method: 'POST',
+          body: JSON.stringify({ down_mbps: num('spDown'), up_mbps: num('spUp') })
+        });
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function setPolicy() {
+      try {
+        const peer = ensurePeer();
+        await api(`/api/clients/${encodeURIComponent(peer)}/policy`, {
+          method: 'POST',
+          body: JSON.stringify({
+            down_gb: num('plDown'),
+            up_gb: num('plUp'),
+            period: val('plPeriod') || '0',
+            mode: val('plMode') || 'disable',
+            over_down_mbps: num('plOverDown'),
+            over_up_mbps: num('plOverUp'),
+          })
+        });
+        await refreshAll();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function exportUsersJson() {
+      try {
+        const out = await api('/api/exports/users.json');
+        byId('configOut').value = JSON.stringify(out.data, null, 2);
+        setStatus(`users json exported: ${out.file}`);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    function exportUsersPdf() {
+      window.open('/api/exports/users.pdf', '_blank');
+      setStatus('users pdf export requested');
+    }
+
+    async function exportDashJson() {
+      try {
+        const out = await api('/api/exports/dashboard.json');
+        setStatus(`dashboard json exported: ${out.file}`);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function exportDashCsv() {
+      try {
+        const out = await api('/api/exports/dashboard.csv');
+        setStatus(`dashboard csv exported: ${out.file}`);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function copyConfig() {
+      try {
+        await navigator.clipboard.writeText(byId('configOut').value || '');
+        setStatus('config copied to clipboard');
+      } catch (e) { setStatus(`copy failed: ${e.message}`, true); }
+    }
+
+    function downloadConfig() {
+      const content = byId('configOut').value || '';
+      if (!content.trim()) { setStatus('no config to save', true); return; }
+      const blob = new Blob([content + '\n'], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = lastConfigFilename || 'client.conf';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus('config file prepared');
+    }
+
+    function toggleAuto() {
+      if (autoTimer) {
+        clearInterval(autoTimer);
+        autoTimer = null;
+        byId('autoBtn').textContent = 'Start';
+        setStatus('auto refresh stopped');
+        return;
+      }
+      const sec = Number(byId('autoSec').value || '0');
+      if (sec <= 0) { setStatus('select interval > 0', true); return; }
+      autoTimer = setInterval(() => { refreshAll(false); }, sec * 1000);
+      byId('autoBtn').textContent = 'Stop';
+      setStatus(`auto refresh every ${sec}s`);
+    }
+
+    async function refreshAll(showStatus = true) {
+      try {
+        await api('/api/refresh', { method: 'POST' });
+        await Promise.all([
+          loadOverview(),
+          loadInterfaceStats(),
+          loadInterfaces(),
+          loadClients(),
+        ]);
+        if (showStatus) setStatus('refreshed');
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    (async () => {
+      try {
+        await loadProfiles();
+        await refreshAll();
+        await runDiagnostics();
+        document.querySelectorAll('.modal').forEach((m) => {
+          m.addEventListener('click', (ev) => {
+            if (ev.target === m) m.classList.remove('show');
+          });
+        });
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape') {
+            document.querySelectorAll('.modal.show').forEach((m) => m.classList.remove('show'));
+          }
+        });
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    })();
+</script>
+</body>
+</html>

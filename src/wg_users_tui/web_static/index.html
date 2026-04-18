@@ -101,6 +101,11 @@
     .meta { color: var(--muted); font-size: 14px; }
     .ok { color: var(--ok); }
     .warn { color: var(--warn); }
+    .warn.clickable {
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
     .bad { color: var(--bad); }
     .pill {
       border: 1px solid var(--line);
@@ -872,6 +877,26 @@
     </div>
   </div>
 
+  <div class="modal" id="staleModal">
+    <div class="modal-card">
+      <div class="row"><strong>Stale Handshake Peers (&gt;10m)</strong><span class="spacer"></span><span class="pill" id="staleCount">0 peers</span><button class="ghost" onclick="closeModal('staleModal')">Close</button></div>
+      <div class="table-wrap" style="max-height:420px; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>IP</th>
+              <th>Interface</th>
+              <th>State</th>
+              <th>Last Handshake</th>
+            </tr>
+          </thead>
+          <tbody id="staleBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   </div>
 
   <script>
@@ -1143,6 +1168,59 @@
         return m === 1 ? '1 minute' : `${m} minutes`;
       }
       return `${s}s`;
+    }
+    function handshakeToSeconds(text) {
+      const s = String(text || '').trim().toLowerCase();
+      if (!s) return null;
+      const re = /([0-9]+)\s*([wdhms])/g;
+      let m = null;
+      let sum = 0;
+      let consumed = 0;
+      while ((m = re.exec(s)) !== null) {
+        const n = Number(m[1] || 0);
+        const u = m[2];
+        consumed += m[0].length;
+        if (u === 'w') sum += n * 7 * 86400;
+        else if (u === 'd') sum += n * 86400;
+        else if (u === 'h') sum += n * 3600;
+        else if (u === 'm') sum += n * 60;
+        else if (u === 's') sum += n;
+      }
+      const compact = s.replace(/\s+/g, '');
+      if (consumed <= 0 || consumed !== compact.length) return null;
+      return sum;
+    }
+    function stalePeersFromCache() {
+      const rows = Array.isArray(clientsCache) ? clientsCache : [];
+      const stale = rows.filter((c) => {
+        const hs = handshakeToSeconds(c.last_handshake);
+        return hs !== null && hs > 600;
+      });
+      stale.sort((a, b) => {
+        const aa = handshakeToSeconds(a.last_handshake) || 0;
+        const bb = handshakeToSeconds(b.last_handshake) || 0;
+        return bb - aa;
+      });
+      return stale;
+    }
+    function openStaleModal() {
+      const rows = stalePeersFromCache();
+      const body = byId('staleBody');
+      if (!body) return;
+      body.innerHTML = '';
+      for (const c of rows) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${txt(c.name)}</td>
+          <td>${txt(c.ip)}</td>
+          <td>${txt(c.interface)}</td>
+          <td>${txt(c.state)}</td>
+          <td>${txt(c.last_handshake)}</td>
+        `;
+        body.appendChild(tr);
+      }
+      byId('staleCount').textContent = `${rows.length} peers`;
+      openModal('staleModal');
     }
     function periodInputFromSeconds(sec) {
       const s = Number(sec || 0);
@@ -1973,9 +2051,30 @@
       byId('diskBar').style.width = `${Math.max(0, Math.min(100, diskPct))}%`;
 
       byId('overviewLine').textContent = `router=${data.profile}@${data.router} | version=${txt(rr.version)} | uptime=${txt(rr.uptime)} | poll=${Math.round(data.poll_latency_ms)}ms`;
-      byId('alerts').innerHTML = (data.alerts || []).length
-        ? data.alerts.map(a => `<span class="warn">${a}</span>`).join(' | ')
-        : '<span class="ok">No alerts</span>';
+      const alertsEl = byId('alerts');
+      if ((data.alerts || []).length) {
+        alertsEl.innerHTML = '';
+        (data.alerts || []).forEach((a, idx) => {
+          const text = String(a || '');
+          const isStale = text.startsWith('Stale handshake peers (>10m):');
+          const span = document.createElement('span');
+          span.className = isStale ? 'warn clickable' : 'warn';
+          span.textContent = text;
+          if (isStale) {
+            span.title = 'Click to see stale peers';
+            span.onclick = openStaleModal;
+          }
+          alertsEl.appendChild(span);
+          if (idx < (data.alerts || []).length - 1) {
+            const sep = document.createElement('span');
+            sep.className = 'meta';
+            sep.textContent = ' | ';
+            alertsEl.appendChild(sep);
+          }
+        });
+      } else {
+        alertsEl.innerHTML = '<span class="ok">No alerts</span>';
+      }
       renderWgHealth(data.wg_health || []);
     }
 

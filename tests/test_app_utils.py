@@ -169,6 +169,34 @@ invalid=just-text
         out = a.build_visible_peers()
         self.assertEqual([x.peer_id for x in out], ["*2", "*1"])
 
+    def test_api_remove_with_fallback_uses_numbers_after_id_failure(self):
+        c = app.ApiSslClient("1.1.1.1", "u", "p")
+        calls = []
+
+        def fake_cmd(path, attrs=None):
+            calls.append((path, attrs))
+            if attrs and ".id" in attrs:
+                raise RuntimeError("bad command argument")
+            return []
+
+        c._cmd = fake_cmd  # type: ignore[assignment]
+        c.delete_peer("*10")
+        self.assertEqual(calls[0], ("/interface/wireguard/peers/remove", {".id": "*10"}))
+        self.assertEqual(calls[1], ("/interface/wireguard/peers/remove", {"numbers": "*10"}))
+
+    def test_api_remove_with_fallback_does_not_retry_missing_item(self):
+        c = app.ApiSslClient("1.1.1.1", "u", "p")
+        calls = []
+
+        def fake_cmd(path, attrs=None):
+            calls.append((path, attrs))
+            raise RuntimeError("no such item")
+
+        c._cmd = fake_cmd  # type: ignore[assignment]
+        with self.assertRaises(RuntimeError):
+            c.delete_peer("*10")
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

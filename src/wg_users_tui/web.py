@@ -14,6 +14,32 @@ class SelectProfileBody(BaseModel):
     name: str
 
 
+class ProfileCreateBody(BaseModel):
+    name: str
+    user: str
+    password: str
+    router_ip: str
+    endpoint_ip: str = ""
+    dns_servers: str = ""
+    transport: str = "rest"
+    timeout_sec: str = ""
+    use_https: str = ""
+    exempt_traffic_dst_list: str = ""
+
+
+class ProfileUpdateBody(BaseModel):
+    new_name: str | None = None
+    user: str | None = None
+    password: str | None = None
+    router_ip: str | None = None
+    endpoint_ip: str | None = None
+    dns_servers: str | None = None
+    transport: str | None = None
+    timeout_sec: str | None = None
+    use_https: str | None = None
+    exempt_traffic_dst_list: str | None = None
+
+
 class EnableBody(BaseModel):
     enabled: bool
 
@@ -79,6 +105,50 @@ def create_app() -> FastAPI:
     def profiles() -> Dict[str, Any]:
         return {"current": manager.current_profile(), "profiles": manager.list_profiles()}
 
+    @app.get("/api/profiles/{name}")
+    def profile_get(name: str) -> Dict[str, Any]:
+        try:
+            return manager.get_profile(name)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/profiles")
+    def profile_create(body: ProfileCreateBody) -> Dict[str, str]:
+        try:
+            manager.create_profile(
+                body.name,
+                {
+                    "user": body.user,
+                    "password": body.password,
+                    "router_ip": body.router_ip,
+                    "endpoint_ip": body.endpoint_ip,
+                    "dns_servers": body.dns_servers,
+                    "transport": body.transport,
+                    "timeout_sec": body.timeout_sec,
+                    "use_https": body.use_https,
+                    "exempt_traffic_dst_list": body.exempt_traffic_dst_list,
+                },
+            )
+            return {"status": "ok", "current": manager.current_profile()}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.put("/api/profiles/{name}")
+    def profile_update(name: str, body: ProfileUpdateBody) -> Dict[str, str]:
+        try:
+            out = manager.update_profile(name, body.model_dump(exclude_none=True), body.new_name)
+            return {"status": "ok", "name": out["name"], "current": manager.current_profile()}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.delete("/api/profiles/{name}")
+    def profile_delete(name: str) -> Dict[str, str]:
+        try:
+            out = manager.delete_profile(name)
+            return {"status": "ok", "current": out["current"]}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     @app.post("/api/profiles/select")
     def profiles_select(body: SelectProfileBody) -> Dict[str, str]:
         try:
@@ -120,6 +190,13 @@ def create_app() -> FastAPI:
     def suggest_ip(iface: str) -> Dict[str, str]:
         try:
             return {"ip": manager.suggest_ip(iface)}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.get("/api/interfaces/{iface}/ip-pool")
+    def interface_ip_pool(iface: str) -> Dict[str, Any]:
+        try:
+            return manager.interface_ip_pool_info(iface)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

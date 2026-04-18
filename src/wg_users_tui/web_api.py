@@ -2,6 +2,7 @@
 import ipaddress
 import json
 import os
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,8 +14,10 @@ from .app import (
     RouterOSClient,
     bps_h,
     bytes_h,
+    env_file_path,
     gb_to_bytes,
     mbps_to_bps,
+    parse_router_profiles,
     parse_period_input,
     slug,
 )
@@ -88,6 +91,120 @@ class WebManager:
     def current_profile(self) -> str:
         return self.engine.profile_name
 
+    @staticmethod
+    def _validate_profile_name(name: str) -> str:
+        n = str(name or "").strip()
+        if not n:
+            raise RuntimeError("Profile name is required")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", n):
+            raise RuntimeError("Profile name must be 1..64 chars: English letters, digits, _, -, .")
+        return n
+
+    @staticmethod
+    def _clean_profile_patch(payload: Dict[str, Any]) -> Dict[str, str]:
+        allowed = {
+            "user",
+            "password",
+            "router_ip",
+            "endpoint_ip",
+            "dns_servers",
+            "transport",
+            "timeout_sec",
+            "use_https",
+            "exempt_traffic_dst_list",
+        }
+        out: Dict[str, str] = {}
+        for k, v in payload.items():
+            key = str(k or "").strip().lower()
+            if key not in allowed:
+                continue
+            val = str(v or "").strip()
+            if val == "":
+                continue
+            out[key] = val
+        if "transport" in out:
+            t = out["transport"].strip().lower()
+            if t in ("api_ssl", "api-ssl"):
+                out["transport"] = "api-ssl"
+            elif t in ("api",):
+                out["transport"] = "api"
+            else:
+                out["transport"] = "rest"
+        if "use_https" in out:
+            out["use_https"] = "true" if out["use_https"].lower() in ("1", "true", "yes", "on") else "false"
+        return out
+
+    @staticmethod
+    def _profile_to_env_line(name: str, cfg: Dict[str, str]) -> str:
+        order = [
+            "user",
+            "password",
+            "router_ip",
+            "endpoint_ip",
+            "dns_servers",
+            "transport",
+            "timeout_sec",
+            "use_https",
+            "exempt_traffic_dst_list",
+        ]
+        chunks: List[str] = []
+        for key in order:
+            val = str(cfg.get(key, "")).strip()
+            if val:
+                chunks.append(f"{key}={val}")
+        for key in sorted(cfg.keys()):
+            if key in order:
+                continue
+            val = str(cfg.get(key, "")).strip()
+            if val:
+                chunks.append(f"{key}={val}")
+        return f"{name}={{" + ",".join(chunks) + "}"
+
+    def _profiles_env_path(self) -> str:
+        return env_file_path()
+
+    def _save_profiles_to_env(self, profiles: Dict[str, Dict[str, str]]) -> None:
+        path = self._profiles_env_path()
+        lines: List[str] = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        keep: List[str] = []
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                keep.append(raw)
+                continue
+            _name, rest = line.split("=", 1)
+            rest = rest.strip()
+            if rest.startswith("{") and rest.endswith("}"):
+                continue
+            keep.append(raw)
+
+        while keep and keep[-1].strip() == "":
+            keep.pop()
+        if keep:
+            keep.append("\n")
+
+        for name in sorted(profiles.keys()):
+            keep.append(self._profile_to_env_line(name, profiles[name]) + "\n")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(keep)
+
+    def _reload_profiles(self, prefer_name: Optional[str] = None) -> None:
+        self.engine.profiles = parse_router_profiles(self._profiles_env_path())
+        if not self.engine.profiles:
+            raise RuntimeError("No profile found in .env after update")
+        target = prefer_name if prefer_name in self.engine.profiles else None
+        if not target:
+            cur = self.engine.profile_name
+            target = cur if cur in self.engine.profiles else sorted(self.engine.profiles.keys())[0]
+        self.engine.connect_profile(target, self.engine.profiles[target])
+        self.engine.reset_runtime_caches()
+        self.engine.refresh_data(force=True)
+
     def list_profiles(self) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
         for name in sorted(self.engine.profiles.keys()):
@@ -101,6 +218,77 @@ class WebManager:
                 }
             )
         return rows
+
+    def get_profile(self, name: str) -> Dict[str, str]:
+        with self._lock:
+            n = self._validate_profile_name(name)
+            p = self.engine.profiles.get(n)
+            if not p:
+                raise RuntimeError(f"Profile not found: {n}")
+            return {
+                "name": n,
+                "user": p.get("user", ""),
+                "password": p.get("password", ""),
+                "router_ip": p.get("router_ip", ""),
+                "endpoint_ip": p.get("endpoint_ip", ""),
+                "dns_servers": p.get("dns_servers", ""),
+                "transport": p.get("transport", "rest"),
+                "timeout_sec": p.get("timeout_sec", ""),
+                "use_https": p.get("use_https", ""),
+                "exempt_traffic_dst_list": p.get("exempt_traffic_dst_list", ""),
+            }
+
+    def create_profile(self, name: str, payload: Dict[str, Any]) -> None:
+        with self._lock:
+            n = self._validate_profile_name(name)
+            if n in self.engine.profiles:
+                raise RuntimeError(f"Profile already exists: {n}")
+            patch = self._clean_profile_patch(payload)
+            if not patch.get("router_ip") or not patch.get("user") or not patch.get("password"):
+                raise RuntimeError("router_ip, user, and password are required")
+            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+            profiles[n] = patch
+            self._save_profiles_to_env(profiles)
+            prefer = self.engine.profile_name if self.engine.profile_name in profiles else n
+            self._reload_profiles(prefer_name=prefer)
+
+    def update_profile(self, name: str, payload: Dict[str, Any], new_name: Optional[str] = None) -> Dict[str, str]:
+        with self._lock:
+            n = self._validate_profile_name(name)
+            if n not in self.engine.profiles:
+                raise RuntimeError(f"Profile not found: {n}")
+            final_name = self._validate_profile_name(new_name) if new_name else n
+            if final_name != n and final_name in self.engine.profiles:
+                raise RuntimeError(f"Profile already exists: {final_name}")
+            patch = self._clean_profile_patch(payload)
+            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+            cur = dict(profiles.pop(n))
+            cur.update(patch)
+            if not cur.get("router_ip") or not cur.get("user") or not cur.get("password"):
+                raise RuntimeError("router_ip, user, and password are required")
+            profiles[final_name] = cur
+            self._save_profiles_to_env(profiles)
+            current_before = self.engine.profile_name
+            prefer = final_name if current_before == n else current_before
+            if prefer not in profiles:
+                prefer = final_name
+            self._reload_profiles(prefer_name=prefer)
+            return {"name": final_name}
+
+    def delete_profile(self, name: str) -> Dict[str, str]:
+        with self._lock:
+            n = self._validate_profile_name(name)
+            if n not in self.engine.profiles:
+                raise RuntimeError(f"Profile not found: {n}")
+            if len(self.engine.profiles) <= 1:
+                raise RuntimeError("Cannot delete the last profile")
+            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+            del profiles[n]
+            current = self.engine.profile_name
+            next_name = current if current in profiles else sorted(profiles.keys())[0]
+            self._save_profiles_to_env(profiles)
+            self._reload_profiles(prefer_name=next_name)
+            return {"current": self.engine.profile_name}
 
     def select_profile(self, name: str) -> None:
         with self._lock:
@@ -224,6 +412,40 @@ class WebManager:
                     continue
                 return str(host)
             raise RuntimeError(f"No free IP found in {network}")
+
+    def interface_ip_pool_info(self, interface: str) -> Dict[str, Any]:
+        with self._lock:
+            if self.engine.client is None:
+                raise RuntimeError("Router client is not initialized")
+            ip_rows = self.engine.client.list_ip_addresses()
+            peers = self.engine.client.list_peers()
+            local_cidr = ""
+            iface_ip = None
+            for r in ip_rows:
+                if str(r.get("interface", "")) == interface:
+                    local_cidr = str(r.get("address", ""))
+                    try:
+                        iface_ip = str(ipaddress.ip_interface(local_cidr).ip)
+                    except Exception:
+                        iface_ip = None
+                    break
+            if not local_cidr:
+                raise RuntimeError(f"No IP address found on interface {interface}")
+            network = ipaddress.ip_interface(local_cidr).network
+            used_ips: List[str] = []
+            for p in peers:
+                if p.interface != interface:
+                    continue
+                try:
+                    used_ips.append(str(ipaddress.ip_address(p.ip)))
+                except Exception:
+                    continue
+            return {
+                "interface": interface,
+                "cidr": str(network),
+                "interface_ip": iface_ip,
+                "used_ips": sorted(set(used_ips)),
+            }
 
     def build_clients_payload(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -536,6 +758,8 @@ class WebManager:
         with self._lock:
             if self.engine.client is None:
                 raise RuntimeError("Router client is not initialized")
+            if req.comment and not re.fullmatch(r"[A-Za-z0-9 -]{1,32}", req.comment.strip()):
+                raise RuntimeError("Comment must be English letters/digits/space/- and max 32 chars")
             ifaces = self.engine.client.list_wireguard_interfaces()
             iface = None
             for i in ifaces:
@@ -552,9 +776,14 @@ class WebManager:
             ip_rows = self.engine.client.list_ip_addresses()
             peers = self.engine.client.list_peers()
             local_cidr = ""
+            iface_ip = None
             for r in ip_rows:
                 if str(r.get("interface", "")) == iface_name:
                     local_cidr = str(r.get("address", ""))
+                    try:
+                        iface_ip = ipaddress.ip_interface(local_cidr).ip
+                    except Exception:
+                        iface_ip = None
                     break
             if not local_cidr:
                 raise RuntimeError(f"No IP address found on interface {iface_name}")
@@ -562,6 +791,8 @@ class WebManager:
             ip_obj = ipaddress.ip_address(req.ip)
             if ip_obj not in network:
                 raise RuntimeError(f"IP {ip_obj} is not in {network}")
+            if iface_ip is not None and ip_obj == iface_ip:
+                raise RuntimeError(f"IP {ip_obj} is interface IP and cannot be assigned to peer")
             for p in peers:
                 if p.interface == iface_name and p.ip == str(ip_obj):
                     raise RuntimeError(f"IP {ip_obj} is already used")

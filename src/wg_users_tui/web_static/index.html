@@ -6,74 +6,115 @@
   <title>MikroTik WireGuard Manager - Web</title>
   <style>
     :root {
-      --bg: #080f1d;
-      --panel: #111a2f;
-      --panel2: #0d1629;
-      --line: #2a3552;
-      --text: #e9efff;
-      --muted: #9aa9ca;
-      --accent: #4aa4ff;
-      --ok: #1ac77c;
+      --bg: #eff2f7;
+      --panel: #ffffff;
+      --panel2: #f9fbff;
+      --line: #d5dbe7;
+      --line-soft: #e7ecf6;
+      --text: #121826;
+      --muted: #5d6b86;
+      --accent: #3d7eff;
+      --accent-soft: #dce8ff;
+      --ok: #16a34a;
+      --warn: #d99a00;
+      --bad: #e54444;
+      --disabled: #b35a87;
+      --warn-row: #9a6c00;
+      --warn-row-bg: #fff6d8;
+      --surface: #f3f6fc;
+      --shadow: 0 10px 34px rgba(32, 54, 97, 0.08);
+    }
+    body[data-theme="dark"] {
+      --bg: #070d1a;
+      --panel: #0f1b34;
+      --panel2: #0c1630;
+      --line: #2b3a5e;
+      --line-soft: #203050;
+      --text: #e7edff;
+      --muted: #9dadd0;
+      --accent: #5d9bff;
+      --accent-soft: #173362;
+      --ok: #1bc47c;
       --warn: #ffbf47;
       --bad: #ff6d82;
       --disabled: #d77ca2;
+      --warn-row: #ffcf5f;
+      --warn-row-bg: #2f2a12;
+      --surface: #101d37;
+      --shadow: 0 14px 36px rgba(2, 5, 14, 0.5);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-      background: radial-gradient(1200px 600px at 80% -10%, #1b2950 0%, var(--bg) 55%);
+      font-family: "Segoe UI", "Inter", "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+      background: radial-gradient(1200px 640px at 80% -10%, color-mix(in srgb, var(--accent) 20%, transparent) 0%, var(--bg) 58%);
       color: var(--text);
       overflow-x: hidden;
+      transition: background .24s ease, color .24s ease;
     }
-    .wrap { max-width: 1650px; margin: 0 auto; padding: 14px; }
-    h1 { margin: 0; font-size: 18px; color: var(--accent); }
-    .subtitle { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .wrap { max-width: 1660px; margin: 0 auto; padding: 14px; }
+    h1 { margin: 0; font-size: 34px; line-height: 1.1; letter-spacing: -.3px; color: var(--text); }
+    .subtitle { color: var(--muted); font-size: 15px; margin-top: 6px; }
     .panel {
       background: linear-gradient(180deg, var(--panel), var(--panel2));
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--shadow);
     }
-    .topbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-    .grid2 { display: grid; gap: 12px; grid-template-columns: 1fr; }
-    .grid3 { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    .topbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+    .grid2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
+    .grid3 { display: grid; gap: 14px; grid-template-columns: 1fr; }
     @media (min-width: 1100px) {
       .grid2 { grid-template-columns: 1.1fr .9fr; }
       .grid3 { grid-template-columns: 1fr 1fr 1fr; }
     }
     .grid2 > .panel, .grid3 > .panel { min-width: 0; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .row + .row { margin-top: 8px; }
     .spacer { flex: 1; }
     input, select, button, textarea {
-      background: #0f1830;
-      border: 1px solid #2f3b5c;
+      background: var(--surface);
+      border: 1px solid var(--line);
       color: var(--text);
-      border-radius: 6px;
-      padding: 7px 8px;
-      font-size: 12px;
+      border-radius: 12px;
+      padding: 8px 11px;
+      font-size: 15px;
+      font-family: inherit;
+      transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+    input::placeholder, textarea::placeholder { color: var(--muted); opacity: .9; }
+    input:focus, select:focus, textarea:focus, button:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
     }
     button { cursor: pointer; }
-    button:hover { border-color: #4b6297; }
-    button.danger { border-color: #82434f; color: #ffd7df; }
-    button.ghost { color: var(--muted); }
-    .meta { color: var(--muted); font-size: 12px; }
+    button:hover { border-color: var(--accent); transform: translateY(-1px); }
+    button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+    button.danger {
+      background: color-mix(in srgb, var(--bad) 20%, transparent);
+      border-color: color-mix(in srgb, var(--bad) 56%, var(--line));
+      color: color-mix(in srgb, var(--bad) 85%, var(--text));
+    }
+    button.ghost { color: var(--muted); background: transparent; }
+    .meta { color: var(--muted); font-size: 14px; }
     .ok { color: var(--ok); }
     .warn { color: var(--warn); }
     .bad { color: var(--bad); }
     .pill {
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 11px;
+      padding: 4px 10px;
+      font-size: 12px;
       color: var(--muted);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
     }
-    .cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
-    .k { color: var(--muted); font-size: 11px; }
-    .v { font-size: 14px; margin-top: 3px; }
-    .bar { height: 10px; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+    .cards { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent); }
+    .k { color: var(--muted); font-size: 15px; }
+    .v { font-size: 19px; margin-top: 4px; line-height: 1.2; letter-spacing: -.1px; }
+    .bar { height: 12px; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--surface) 65%, transparent); }
     .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #1bbf78, #4aa4ff); }
     .table-wrap {
       max-height: 440px;
@@ -81,19 +122,336 @@
       overflow-y: auto;
       overflow-x: auto;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
     }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .wide-table { min-width: 1200px; }
-    th, td { border-bottom: 1px solid #202d49; padding: 6px; text-align: left; white-space: nowrap; }
-    th { position: sticky; top: 0; background: #121d35; color: var(--muted); cursor: pointer; }
-    tr.selected { background: #1a2a4e; outline: 1px solid #4870ba; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .wide-table { min-width: 100%; width: max-content; table-layout: fixed; }
+    .clients-table th, .clients-table td {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 8px 7px;
+    }
+    .clients-table th {
+      position: relative;
+      font-size: 12px;
+      user-select: none;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+    .clients-table td { font-size: 13px; }
+    .clients-table th.drag-over {
+      background: color-mix(in srgb, var(--accent) 20%, var(--panel2));
+    }
+    .resize-handle {
+      position: absolute;
+      top: 0;
+      right: -3px;
+      width: 6px;
+      height: 100%;
+      cursor: col-resize;
+      background: transparent;
+      z-index: 5;
+    }
+    .resize-handle:hover {
+      background: color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+    th, td { border-bottom: 1px solid var(--line-soft); padding: 12px; text-align: left; white-space: nowrap; }
+    th { position: sticky; top: 0; background: color-mix(in srgb, var(--panel2) 90%, transparent); color: var(--muted); cursor: pointer; font-size: 14px; font-weight: 700; }
+    td { font-size: 14px; }
+    tr.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 62%, var(--line)); }
+    tr.limited { color: var(--warn-row); background: color-mix(in srgb, var(--warn-row-bg) 85%, transparent); }
     tr.disabled { color: var(--disabled); }
-    textarea { width: 100%; min-height: 150px; }
+    textarea { width: 100%; min-height: 160px; resize: vertical; }
     .kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 8px; font-size: 12px; }
     .kv div:nth-child(odd) { color: var(--muted); }
     .diag-ok { color: var(--ok); }
     .diag-bad { color: var(--bad); }
+    .wg-health-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .wg-health-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+    }
+    .wg-health-top {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .wg-iface {
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .wg-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .wg-tag {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: var(--muted);
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+    }
+    .wg-tag.ok {
+      color: var(--ok);
+      border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+    }
+    .wg-tag.bad {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+    }
+    .snap-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 10px;
+    }
+    .snap-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      min-width: 0;
+    }
+    .snap-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .snap-empty {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .snap-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) minmax(120px, 1.5fr) auto;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0;
+      min-width: 0;
+    }
+    .snap-label {
+      font-size: 12px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .snap-track {
+      height: 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      overflow: hidden;
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+      min-width: 0;
+    }
+    .snap-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2fb67f, #468af5);
+    }
+    .snap-fill.warn {
+      background: linear-gradient(90deg, #f2b22b, #e47c20);
+    }
+    .snap-fill.bad {
+      background: linear-gradient(90deg, #e85a5a, #d13d7d);
+    }
+    .snap-val {
+      font-size: 12px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .snap-badges {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .snap-badge {
+      font-size: 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 1px 7px;
+      color: var(--muted);
+    }
+    .snap-badge.warn {
+      color: var(--warn);
+      border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+    }
+    .snap-badge.bad {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+    }
+    .actions-graphs {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 8px;
+    }
+    .ag-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      padding: 8px;
+      min-width: 0;
+    }
+    .ag-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .ag-track {
+      height: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+    }
+    .ag-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2fb67f, #468af5);
+    }
+    .ag-fill.warn {
+      background: linear-gradient(90deg, #f2b22b, #e47c20);
+    }
+    .ag-fill.bad {
+      background: linear-gradient(90deg, #e85a5a, #d13d7d);
+    }
+    .ag-meta {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2px;
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .actions-dd {
+      position: relative;
+      display: inline-block;
+    }
+    .actions-dd-menu {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      min-width: 220px;
+      max-width: 260px;
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      padding: 6px;
+      z-index: 30;
+      display: none;
+    }
+    .actions-dd-menu.show { display: block; }
+    .actions-dd-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .actions-dd-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .actions-dd-list {
+      display: grid;
+      gap: 6px;
+    }
+    .actions-dd-list button {
+      width: 100%;
+      text-align: left;
+      padding: 7px 9px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+    .field-grid {
+      display: grid;
+      gap: 10px;
+      align-items: end;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      width: 100%;
+    }
+    .field {
+      min-width: 0;
+    }
+    .field input,
+    .field select {
+      width: 100%;
+    }
+    .field-actions {
+      display: flex;
+      align-items: end;
+    }
+    .field-actions button {
+      white-space: nowrap;
+    }
+    .speed-grid {
+      width: fit-content;
+      max-width: 100%;
+      grid-template-columns: minmax(220px, 300px) minmax(220px, 300px) auto;
+      justify-content: start;
+      gap: 12px;
+    }
+    .policy-grid {
+      grid-template-columns: repeat(6, minmax(165px, 1fr)) auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .speed-row { margin-top: 10px; }
+    .policy-row { margin-top: 8px; }
+    .field-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+      display: block;
+    }
+    .mini-track {
+      height: 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      overflow: hidden;
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+      min-width: 60px;
+    }
+    .mini-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2fb67f, #468af5);
+    }
+    .mini-fill.warn {
+      background: linear-gradient(90deg, #f2b22b, #e47c20);
+    }
+    .mini-fill.bad {
+      background: linear-gradient(90deg, #e85a5a, #d13d7d);
+    }
+    .mini-wrap {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .mini-val {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
     .modal {
       position: fixed;
       inset: 0;
@@ -111,13 +469,80 @@
       overflow: auto;
       background: linear-gradient(180deg, var(--panel), var(--panel2));
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: var(--shadow);
     }
     .modal-lg { width: min(1500px, 98vw); }
+    .profile-manager {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .profile-list {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: auto;
+      max-height: 380px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+    }
+    .profile-item {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .profile-item:last-child { border-bottom: none; }
+    .profile-item.active {
+      background: color-mix(in srgb, var(--accent) 20%, transparent);
+      outline: 1px solid color-mix(in srgb, var(--accent) 62%, var(--line));
+    }
+    .pm-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .pm-grid .full { grid-column: 1 / -1; }
+    .pm-field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    @media (max-width: 900px) {
+      .profile-manager { grid-template-columns: 1fr; }
+      .pm-grid { grid-template-columns: 1fr; }
+    }
+    .section-head { margin-bottom: 10px; }
+    @media (max-width: 900px) {
+      .wrap { padding: 10px; }
+      h1 { font-size: 26px; }
+      .subtitle { font-size: 14px; }
+      .panel { padding: 12px; border-radius: 14px; }
+      .topbar > * { flex: 1 1 auto; }
+      .topbar .spacer { display: none; }
+      #profileSelect, #searchBox, #autoSec { width: 100%; min-width: 0 !important; }
+      .cards { grid-template-columns: 1fr; }
+      .card .v { font-size: 18px; }
+      .row input, .row select, .row button { width: 100%; }
+      .row label.meta { width: 100%; }
+      .table-wrap { max-height: 360px; }
+      th, td { padding: 10px 8px; }
+      td { font-size: 14px; }
+      .snap-grid { grid-template-columns: 1fr; }
+      .snap-row { grid-template-columns: 1fr; gap: 6px; }
+      .actions-graphs { grid-template-columns: 1fr; }
+      .actions-dd-menu { left: auto; right: 0; min-width: 230px; }
+      .field-grid { grid-template-columns: 1fr !important; }
+      .field-actions { align-items: stretch; }
+      .field-actions button { width: 100%; }
+      .modal { padding: 8px; }
+      .modal-card { width: 100%; max-height: 94vh; padding: 10px; }
+    }
   </style>
 </head>
-<body>
+<body data-theme="dark">
   <div class="wrap">
     <h1>MikroTik WireGuard Manager - Web</h1>
     <div class="subtitle">Dashboard, clients, diagnostics, exports, and policy actions</div>
@@ -126,7 +551,9 @@
       <strong>Router</strong>
       <select id="profileSelect"></select>
       <button onclick="selectProfile()">Switch</button>
+      <button onclick="openProfileModal()">Manage Routers</button>
       <button onclick="refreshAll()">Refresh</button>
+      <button class="ghost" id="themeBtn" onclick="toggleTheme()">Dark</button>
       <span class="spacer"></span>
       <label class="meta">Auto</label>
       <select id="autoSec">
@@ -141,7 +568,7 @@
 
     <div class="grid2" style="margin-top:12px;">
       <div class="panel">
-        <div class="row">
+        <div class="row section-head">
           <strong>Dashboard</strong>
           <span class="spacer"></span>
           <button class="ghost" onclick="exportDashJson()">Export dashboard JSON</button>
@@ -176,7 +603,7 @@
       </div>
 
       <div class="panel">
-        <div class="row"><strong>Diagnostics</strong><span class="spacer"></span><button onclick="runDiagnostics()">Run</button></div>
+        <div class="row section-head"><strong>Diagnostics</strong><span class="spacer"></span><button onclick="runDiagnostics()">Run</button></div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Profile</th><th>Router</th><th>Status</th><th>Ports</th><th>Detail</th></tr></thead>
@@ -189,43 +616,68 @@
     </div>
 
     <div class="panel" style="margin-top:12px;">
+      <div class="row"><strong>Snapshot Graphs (Router Data)</strong></div>
+      <div id="snapshotCharts" class="snap-grid"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px;">
         <div class="row">
           <strong>Clients</strong>
           <span id="clientsCount" class="pill"></span>
           <span class="spacer"></span>
-          <input id="searchBox" placeholder="Search name/ip/interface/peer id" oninput="renderClients()" style="min-width:260px" />
+          <input id="searchBox" placeholder="Search name/ip/interface/peer id" oninput="sanitizeSearchInput(); renderClients();" style="min-width:260px" />
           <label class="meta"><input id="disabledOnly" type="checkbox" onchange="renderClients()" /> disabled only</label>
         </div>
         <div class="row" style="margin-top:10px; margin-bottom:10px;">
           <button class="ghost" onclick="selectAllVisible()">Select visible</button>
           <button class="ghost" onclick="clearBatch()">Clear selection</button>
         <button onclick="openModal('addModal')">Add Client</button>
-        <button onclick="openModal('actionsModal'); refreshActionsModal()">Actions</button>
+        <div class="actions-dd" id="actionsDropdown">
+          <button id="actionsMenuBtn" onclick="openActionsMenu(event)">Actions</button>
+          <div id="actionsDdMenu" class="actions-dd-menu">
+            <div class="actions-dd-head">
+              <span class="actions-dd-title">Actions</span>
+              <span id="actionsMenuCount" class="pill">0 selected</span>
+            </div>
+            <div class="actions-dd-list">
+              <button onclick="menuEdit()">Edit</button>
+              <button onclick="menuEnable()">Enable</button>
+              <button onclick="menuDisable()">Disable</button>
+              <button onclick="menuResetUsage()">Reset usage</button>
+              <button onclick="menuClearLimits()">Clear limits</button>
+              <button class="danger" onclick="menuDelete()">Delete</button>
+              <button id="actionsMenuRevoke" onclick="menuRevoke()">Revoke</button>
+            </div>
+            <div class="meta" id="actionsMenuHint" style="margin-top:6px;">Select one or more clients.</div>
+          </div>
+        </div>
         <button onclick="exportUsersJson()">Export users JSON</button>
         <button onclick="exportUsersPdf()">Export users PDF</button>
       </div>
-      <div class="table-wrap">
-        <table class="wide-table">
+      <div class="table-wrap" style="max-height:460px;height:460px;">
+        <table id="clientsTable" class="wide-table clients-table">
           <thead>
             <tr>
-              <th>Sel</th>
-              <th onclick="setSort('name')">Name</th>
-              <th onclick="setSort('ip')">IP</th>
-              <th onclick="setSort('interface')">Iface</th>
-              <th onclick="setSort('state')">State</th>
-              <th onclick="setSort('download_since_now_bytes')">Down</th>
-              <th onclick="setSort('upload_since_now_bytes')">Up</th>
-              <th onclick="setSort('down_speed_bps')">DSpd</th>
-              <th onclick="setSort('up_speed_bps')">USpd</th>
-              <th onclick="setSort('traffic_limit_down_bytes')">DLim</th>
-              <th onclick="setSort('traffic_limit_up_bytes')">ULim</th>
-              <th onclick="setSort('traffic_period_seconds')">Period</th>
-              <th onclick="setSort('overlimit_mode')">OMode</th>
-              <th onclick="setSort('overlimit_speed_down_bps')">ODown</th>
-              <th onclick="setSort('overlimit_speed_up_bps')">OUp</th>
-              <th onclick="setSort('overlimit_active')">OAct</th>
-              <th onclick="setSort('speed_limit_down_bps')">SLimD</th>
-              <th onclick="setSort('speed_limit_up_bps')">SLimU</th>
+              <th data-col="sel" title="Select">Sel</th>
+              <th data-col="name" onclick="setSort('name')" title="Client name/comment">Name</th>
+              <th data-col="ip" onclick="setSort('ip')" title="Client IP address">IP</th>
+              <th data-col="interface" onclick="setSort('interface')" title="WireGuard interface">Iface</th>
+              <th data-col="up" onclick="setSort('upload_since_now_bytes')" title="Upload since baseline">Up</th>
+              <th data-col="down" onclick="setSort('download_since_now_bytes')" title="Download since baseline">Down</th>
+              <th data-col="dspd" onclick="setSort('down_speed_bps')" title="Current download speed">DSpd</th>
+              <th data-col="uspd" onclick="setSort('up_speed_bps')" title="Current upload speed">USpd</th>
+              <th data-col="qpct" onclick="setSort('quota_pct')" title="Quota used percent (max of up/down)">QUsed%</th>
+              <th data-col="spct" onclick="setSort('speed_pct')" title="Speed cap usage percent (max of up/down)">Spd%</th>
+              <th data-col="dlim" onclick="setSort('traffic_limit_down_bytes')" title="Download quota limit">DLim</th>
+              <th data-col="ulim" onclick="setSort('traffic_limit_up_bytes')" title="Upload quota limit">ULim</th>
+              <th data-col="period" onclick="setSort('traffic_period_seconds')" title="Quota reset period">Period</th>
+              <th data-col="omode" onclick="setSort('overlimit_mode')" title="Over-limit mode">OMode</th>
+              <th data-col="odown" onclick="setSort('overlimit_speed_down_bps')" title="Over-limit download speed">ODown</th>
+              <th data-col="oup" onclick="setSort('overlimit_speed_up_bps')" title="Over-limit upload speed">OUp</th>
+              <th data-col="oact" onclick="setSort('overlimit_active')" title="Over-limit currently active">OAct</th>
+              <th data-col="slimd" onclick="setSort('speed_limit_down_bps')" title="Normal speed limit download">SLimD</th>
+              <th data-col="slimu" onclick="setSort('speed_limit_up_bps')" title="Normal speed limit upload">SLimU</th>
+              <th data-col="state" onclick="setSort('state')" title="Client state">State</th>
             </tr>
           </thead>
           <tbody id="clientsBody"></tbody>
@@ -240,27 +692,30 @@
       <div class="row">
         <select id="addIface" style="min-width:180px;"></select>
         <button onclick="suggestIp()">Suggest IP</button>
-        <input id="addIp" placeholder="IP" />
-        <input id="addComment" placeholder="Comment" style="min-width:240px" />
+        <input id="addIp" placeholder="IP" inputmode="decimal" maxlength="15" />
+        <input id="addComment" placeholder="Comment" maxlength="32" style="min-width:240px" />
       </div>
       <div class="row">
-        <input id="addSpeedDown" placeholder="Speed down Mbps (optional)" />
-        <input id="addSpeedUp" placeholder="Speed up Mbps (optional)" />
-        <input id="addLimitDown" placeholder="Limit down GB (optional)" />
-        <input id="addLimitUp" placeholder="Limit up GB (optional)" />
+        <input id="addSpeedDown" placeholder="Speed down Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addSpeedUp" placeholder="Speed up Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addLimitDown" placeholder="Limit down GB (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addLimitUp" placeholder="Limit up GB (optional)" inputmode="decimal" maxlength="16" />
       </div>
       <div class="row">
-        <input id="addPeriod" placeholder="Period (optional: day/2h/0)" />
+        <input id="addPeriod" placeholder="Period (optional: day/2h/0)" maxlength="16" />
         <select id="addMode">
           <option value="">Over-limit mode (optional)</option>
           <option value="disable">disable</option>
           <option value="throttle">throttle</option>
           <option value="trusted_only">trusted_only</option>
         </select>
-        <input id="addOverDown" placeholder="Over down Mbps (optional)" />
-        <input id="addOverUp" placeholder="Over up Mbps (optional)" />
+        <input id="addOverDown" placeholder="Over down Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addOverUp" placeholder="Over up Mbps (optional)" inputmode="decimal" maxlength="16" />
         <button onclick="addClient()">Create</button>
       </div>
+      <div class="row" style="margin-top:10px;"><strong>Client Config</strong><span class="spacer"></span><button onclick="copyAddConfig()">Copy</button><button onclick="downloadAddConfig()">Save file</button></div>
+      <div style="height:10px"></div>
+      <textarea id="addConfigOut" style="min-height:200px;" placeholder="New client configuration appears here after create."></textarea>
     </div>
   </div>
 
@@ -272,6 +727,10 @@
         <span class="meta" id="actionsMode">mode: none</span>
       </div>
       <div id="actionsSelectedList" style="margin-top:8px;"></div>
+      <div id="actionsUserGraphsWrap" style="margin-top:8px;">
+        <div class="row"><strong>Client Graphs</strong></div>
+        <div id="actionsUserGraphs" class="actions-graphs"></div>
+      </div>
       <div class="row" style="margin-top:10px;">
         <button id="btnActionEnable" onclick="actionSetEnable(true)">Enable</button>
         <button id="btnActionDisable" onclick="actionSetEnable(false)">Disable</button>
@@ -280,29 +739,135 @@
         <button id="btnActionRevoke" onclick="actionRevoke()">Revoke</button>
         <button id="btnActionDelete" class="danger" onclick="actionDelete()">Delete</button>
       </div>
-      <div class="row" style="margin-top:10px;">
-        <input id="spDown" placeholder="Speed down Mbps" />
-        <input id="spUp" placeholder="Speed up Mbps" />
-        <button id="btnActionSetSpeed" onclick="actionSetSpeed()">Set speed</button>
+      <div class="row speed-row">
+        <div class="field-grid speed-grid">
+          <div class="field">
+            <label class="field-label" for="spDown">Speed Download (Mbps)</label>
+            <input id="spDown" placeholder="e.g. 20" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="spUp">Speed Upload (Mbps)</label>
+            <input id="spUp" placeholder="e.g. 10" />
+          </div>
+          <div class="field field-actions">
+            <button id="btnActionSetSpeed" onclick="actionSetSpeed()">Set speed</button>
+          </div>
+        </div>
       </div>
-      <div class="row">
-        <input id="plDown" placeholder="Limit down GB" />
-        <input id="plUp" placeholder="Limit up GB" />
-        <input id="plPeriod" placeholder="Period (day/2h/0)" />
-        <select id="plMode">
-          <option value="disable">disable</option>
-          <option value="throttle">throttle</option>
-          <option value="trusted_only">trusted_only</option>
-        </select>
-        <input id="plOverDown" placeholder="Over down Mbps" />
-        <input id="plOverUp" placeholder="Over up Mbps" />
-        <button id="btnActionSetPolicy" onclick="actionSetPolicy()">Set policy</button>
+      <div class="row policy-row">
+        <div class="field-grid policy-grid">
+          <div class="field">
+            <label class="field-label" for="plDown">Limit Download (GB)</label>
+            <input id="plDown" placeholder="e.g. 50" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plUp">Limit Upload (GB)</label>
+            <input id="plUp" placeholder="e.g. 20" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plPeriod">Period</label>
+            <input id="plPeriod" placeholder="e.g. 1d / 2h / 0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plMode">Over-limit Mode</label>
+            <select id="plMode">
+              <option value="disable">disable</option>
+              <option value="throttle">throttle</option>
+              <option value="trusted_only">trusted_only</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="plOverDown">Over Download (Mbps)</label>
+            <input id="plOverDown" placeholder="e.g. 5" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plOverUp">Over Upload (Mbps)</label>
+            <input id="plOverUp" placeholder="e.g. 3" />
+          </div>
+          <div class="field field-actions">
+            <button id="btnActionSetPolicy" onclick="actionSetPolicy()">Set policy</button>
+          </div>
+        </div>
       </div>
       <div class="row meta">If one client is selected: single change. If multiple are selected: batch change.</div>
       <div id="actionsConfigSection">
         <div class="row" style="margin-top:10px;"><strong>Config Output</strong><span class="spacer"></span><button id="btnCopyConfig" onclick="copyConfig()">Copy</button><button id="btnSaveConfig" onclick="downloadConfig()">Save file</button></div>
         <div style="height:10px"></div>
         <textarea id="configOut" placeholder="New client/revoke configuration appears here."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="profileModal">
+    <div class="modal-card">
+      <div class="row"><strong>Manage Routers</strong><span class="spacer"></span><button class="ghost" onclick="closeModal('profileModal')">Close</button></div>
+      <div class="profile-manager">
+        <div>
+          <div class="row" style="margin-bottom:8px;">
+            <button class="ghost" onclick="newProfileForm()">New</button>
+            <span class="spacer"></span>
+            <span class="pill" id="pmCurrent">current: -</span>
+          </div>
+          <div id="profileList" class="profile-list"></div>
+        </div>
+        <div>
+          <div class="pm-grid">
+            <div class="pm-field full">
+              <label for="pmName">Profile Name</label>
+              <input id="pmName" maxlength="64" placeholder="e.g. Novin_Max" />
+            </div>
+            <div class="pm-field">
+              <label for="pmRouterIp">Router IP</label>
+              <input id="pmRouterIp" placeholder="e.g. 172.16.40.1" />
+            </div>
+            <div class="pm-field">
+              <label for="pmTransport">Transport</label>
+              <select id="pmTransport">
+                <option value="rest">rest</option>
+                <option value="api">api</option>
+                <option value="api-ssl">api-ssl</option>
+              </select>
+            </div>
+            <div class="pm-field">
+              <label for="pmUser">User</label>
+              <input id="pmUser" />
+            </div>
+            <div class="pm-field">
+              <label for="pmPassword">Password</label>
+              <input id="pmPassword" type="text" />
+            </div>
+            <div class="pm-field">
+              <label for="pmEndpointIp">Endpoint IP</label>
+              <input id="pmEndpointIp" />
+            </div>
+            <div class="pm-field">
+              <label for="pmDns">DNS Servers</label>
+              <input id="pmDns" placeholder="x.x.x.x,y.y.y.y" />
+            </div>
+            <div class="pm-field">
+              <label for="pmTimeout">Timeout (sec)</label>
+              <input id="pmTimeout" placeholder="30" />
+            </div>
+            <div class="pm-field">
+              <label for="pmUseHttps">Use HTTPS (rest)</label>
+              <select id="pmUseHttps">
+                <option value="">not set</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <div class="pm-field full">
+              <label for="pmExemptList">Exempt Traffic Address-list</label>
+              <input id="pmExemptList" placeholder="PRIVATE_RANGES" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <button onclick="saveProfile()">Save</button>
+            <button class="danger" onclick="deleteProfile()">Delete</button>
+            <span class="spacer"></span>
+            <span class="meta" id="pmMode">mode: create</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -318,20 +883,231 @@
     let ifSortDesc = true;
     let autoTimer = null;
     let lastConfigFilename = 'client.conf';
+    let configForPeerId = null;
+    let hasGeneratedConfig = false;
     const selectedBatch = new Set();
+    const THEME_KEY = 'wg_web_theme';
+    const CLIENT_COLS_KEY = 'wg_clients_cols_v2';
+    const DEFAULT_CLIENT_COL_ORDER = [
+      'sel', 'name', 'ip', 'interface', 'up', 'down', 'dspd', 'uspd', 'qpct', 'spct',
+      'dlim', 'ulim', 'period', 'omode', 'odown', 'oup', 'oact', 'slimd', 'slimu', 'state',
+    ];
+    let clientColOrder = [];
+    let clientColWidths = {};
+    let clientDraggingKey = null;
+    let actionsForcePeerId = null;
+    const addIfacePoolCache = new Map();
+    let profileManagerRows = [];
+    let profileManagerEditName = null;
 
     function txt(v) { return (v === null || v === undefined || v === '') ? 'not set' : String(v); }
     function val(id) { return document.getElementById(id).value.trim(); }
     function numOrNull(id) { const v = val(id); return v === '' ? null : Number(v); }
     function num(id) { const v = val(id); return v === '' ? 0 : Number(v); }
     function byId(id) { return document.getElementById(id); }
+    function sanitizeSearchInput() {
+      const el = byId('searchBox');
+      if (!el) return;
+      el.value = (el.value || '').replace(/[^A-Za-z0-9.\-_\u0640 ]/g, '');
+    }
+    function sanitizeEnglishNumberInput(id) {
+      const el = byId(id);
+      if (!el) return;
+      let v = String(el.value || '');
+      v = v.replace(/[^0-9.]/g, '');
+      const firstDot = v.indexOf('.');
+      if (firstDot >= 0) v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+      el.value = v.slice(0, 16);
+    }
+    function sanitizeIpv4Input(id) {
+      const el = byId(id);
+      if (!el) return;
+      let v = String(el.value || '').replace(/[^0-9.]/g, '');
+      v = v.replace(/\.{2,}/g, '.');
+      el.value = v.slice(0, 15);
+    }
+    function sanitizeCommentInput() {
+      const el = byId('addComment');
+      if (!el) return;
+      el.value = String(el.value || '').replace(/[^A-Za-z0-9 -]/g, '').slice(0, 32);
+    }
+    function sanitizePeriodInput() {
+      const el = byId('addPeriod');
+      if (!el) return;
+      el.value = String(el.value || '').replace(/[^A-Za-z0-9.]/g, '').slice(0, 16);
+    }
+    function validPeriodText(s) {
+      const t = String(s || '').trim().toLowerCase();
+      if (!t) return true;
+      if (['0', 'none', 'off', 'hour', 'day', 'week', '1h', '1d', '1w', 'h', 'd', 'w'].includes(t)) return true;
+      return /^([0-9]+(\.[0-9]+)?)([smhdw]?)$/.test(t);
+    }
+    function ipv4ToInt(s) {
+      const parts = String(s || '').split('.');
+      if (parts.length !== 4) return null;
+      let n = 0;
+      for (const p of parts) {
+        if (!/^\d+$/.test(p)) return null;
+        const v = Number(p);
+        if (!Number.isInteger(v) || v < 0 || v > 255) return null;
+        n = (n << 8) + v;
+      }
+      return n >>> 0;
+    }
+    function ipInCidr(ip, cidr) {
+      const m = String(cidr || '').split('/');
+      if (m.length !== 2) return false;
+      const base = ipv4ToInt(m[0]);
+      const bits = Number(m[1]);
+      const cur = ipv4ToInt(ip);
+      if (base === null || cur === null || !Number.isInteger(bits) || bits < 0 || bits > 32) return false;
+      const mask = bits === 0 ? 0 : ((0xffffffff << (32 - bits)) >>> 0);
+      return ((base & mask) >>> 0) === ((cur & mask) >>> 0);
+    }
+    async function loadAddIfacePoolInfo(iface) {
+      const key = String(iface || '').trim();
+      if (!key) return null;
+      if (addIfacePoolCache.has(key)) return addIfacePoolCache.get(key);
+      try {
+        const info = await api(`/api/interfaces/${encodeURIComponent(key)}/ip-pool`);
+        addIfacePoolCache.set(key, info);
+        return info;
+      } catch (_) {
+        return null;
+      }
+    }
+    function bindAddFormValidation() {
+      const numericIds = ['addSpeedDown', 'addSpeedUp', 'addLimitDown', 'addLimitUp', 'addOverDown', 'addOverUp'];
+      for (const id of numericIds) {
+        const el = byId(id);
+        if (el && !el.dataset.vBound) {
+          el.dataset.vBound = '1';
+          el.addEventListener('input', () => sanitizeEnglishNumberInput(id));
+        }
+      }
+      const ipEl = byId('addIp');
+      if (ipEl && !ipEl.dataset.vBound) {
+        ipEl.dataset.vBound = '1';
+        ipEl.addEventListener('input', () => sanitizeIpv4Input('addIp'));
+      }
+      const cEl = byId('addComment');
+      if (cEl && !cEl.dataset.vBound) {
+        cEl.dataset.vBound = '1';
+        cEl.addEventListener('input', sanitizeCommentInput);
+      }
+      const pEl = byId('addPeriod');
+      if (pEl && !pEl.dataset.vBound) {
+        pEl.dataset.vBound = '1';
+        pEl.addEventListener('input', sanitizePeriodInput);
+      }
+      const ifaceEl = byId('addIface');
+      if (ifaceEl && !ifaceEl.dataset.vBound) {
+        ifaceEl.dataset.vBound = '1';
+        ifaceEl.addEventListener('change', async () => { await loadAddIfacePoolInfo(ifaceEl.value); });
+      }
+    }
+    function resetAddForm() {
+      const ids = ['addIp', 'addComment', 'addSpeedDown', 'addSpeedUp', 'addLimitDown', 'addLimitUp', 'addPeriod', 'addOverDown', 'addOverUp', 'addConfigOut'];
+      for (const id of ids) {
+        const el = byId(id);
+        if (el) el.value = '';
+      }
+      const mode = byId('addMode');
+      if (mode) mode.value = '';
+    }
+    function resetActionsDraftInputs() {
+      const ids = ['spDown', 'spUp', 'plDown', 'plUp', 'plPeriod', 'plOverDown', 'plOverUp'];
+      for (const id of ids) {
+        const el = byId(id);
+        if (el) el.value = '';
+      }
+      const mode = byId('plMode');
+      if (mode) mode.value = 'disable';
+    }
+    function applyTheme(theme) {
+      const mode = theme === 'light' ? 'light' : 'dark';
+      document.body.setAttribute('data-theme', mode);
+      const btn = byId('themeBtn');
+      if (btn) btn.textContent = mode === 'dark' ? 'Light' : 'Dark';
+    }
+    function initTheme() {
+      let saved = null;
+      try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+      if (saved === 'dark' || saved === 'light') {
+        applyTheme(saved);
+        return;
+      }
+      const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+      applyTheme(prefersLight ? 'light' : 'dark');
+    }
+    function toggleTheme() {
+      const now = document.body.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+      const next = now === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
+    }
     function openModal(id) {
       const m = byId(id);
+      if (id === 'addModal') {
+        resetAddForm();
+        bindAddFormValidation();
+        loadAddIfacePoolInfo(byId('addIface')?.value || '');
+      }
+      if (id === 'actionsModal') {
+        actionsForcePeerId = null;
+        refreshActionsModal();
+      }
       if (m) m.classList.add('show');
     }
     function closeModal(id) {
       const m = byId(id);
+      if (id === 'addModal') resetAddForm();
+      if (id === 'actionsModal') {
+        actionsForcePeerId = null;
+        resetActionsDraftInputs();
+      }
+      if (id === 'profileModal') {
+        profileManagerEditName = null;
+      }
       if (m) m.classList.remove('show');
+    }
+    function closeActionsMenu() {
+      byId('actionsDdMenu')?.classList.remove('show');
+    }
+    function openActionsMenu(ev) {
+      if (ev) ev.stopPropagation();
+      refreshActionsMenuModal();
+      const m = byId('actionsDdMenu');
+      if (!m) return;
+      m.classList.toggle('show');
+    }
+    function refreshActionsMenuModal() {
+      const ids = actionPeerIds();
+      byId('actionsMenuCount').textContent = `${ids.length} selected`;
+      byId('actionsMenuHint').textContent = ids.length === 0
+        ? 'Select at least one client.'
+        : (ids.length === 1 ? 'Single-client actions available.' : 'Batch mode: Revoke is hidden.');
+      const revoke = byId('actionsMenuRevoke');
+      if (revoke) revoke.style.display = ids.length === 1 ? '' : 'none';
+    }
+    function menuEdit() {
+      closeActionsMenu();
+      openModal('actionsModal');
+      refreshActionsModal();
+    }
+    async function menuEnable() { closeActionsMenu(); await actionSetEnable(true); }
+    async function menuDisable() { closeActionsMenu(); await actionSetEnable(false); }
+    async function menuResetUsage() { closeActionsMenu(); await actionResetUsage(); }
+    async function menuClearLimits() { closeActionsMenu(); await actionClearLimits(); }
+    async function menuDelete() { closeActionsMenu(); await actionDelete(); }
+    async function menuRevoke() { closeActionsMenu(); await actionRevoke(); }
+    function updateActionsConfigVisibility(mode) {
+      const cfg = byId('actionsConfigSection');
+      const out = byId('configOut');
+      if (!cfg || !out) return;
+      const hasText = Boolean((out.value || '').trim());
+      const visible = mode === 'single' && hasGeneratedConfig && hasText;
+      cfg.style.display = visible ? '' : 'none';
     }
     function hBytes(n) {
       if (!n || n <= 0) return '0 B';
@@ -382,6 +1158,378 @@
       if (!Number.isFinite(n)) return '';
       const s = n.toFixed(2);
       return s.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    }
+    function clientQuotaPct(c) {
+      const dLim = Number(c.traffic_limit_down_bytes || 0);
+      const uLim = Number(c.traffic_limit_up_bytes || 0);
+      const dUsed = Number(c.download_since_now_bytes || 0);
+      const uUsed = Number(c.upload_since_now_bytes || 0);
+      const parts = [];
+      if (dLim > 0) parts.push((dUsed / dLim) * 100);
+      if (uLim > 0) parts.push((uUsed / uLim) * 100);
+      if (!parts.length) return null;
+      return Math.max(...parts);
+    }
+    function clientSpeedPct(c) {
+      const dCap = Number(c.speed_limit_down_bps || 0);
+      const uCap = Number(c.speed_limit_up_bps || 0);
+      const dNow = Number(c.down_speed_bps || 0);
+      const uNow = Number(c.up_speed_bps || 0);
+      const parts = [];
+      if (dCap > 0) parts.push((dNow / dCap) * 100);
+      if (uCap > 0) parts.push((uNow / uCap) * 100);
+      if (!parts.length) return null;
+      return Math.max(...parts);
+    }
+    function miniBarHtml(pct) {
+      if (pct === null || pct === undefined || !Number.isFinite(Number(pct))) return '<span class="mini-val">not set</span>';
+      const p = Math.max(0, Math.min(999, Number(pct)));
+      const cls = p >= 100 ? 'bad' : (p >= 80 ? 'warn' : '');
+      return `<div class="mini-wrap"><div class="mini-track"><div class="mini-fill ${cls}" style="width:${Math.min(100, p)}%;"></div></div><div class="mini-val">${p.toFixed(0)}%</div></div>`;
+    }
+    function actionGraphCard(title, used, total, usedText, totalText) {
+      if (total <= 0) {
+        return `<div class="ag-card"><div class="ag-title">${title}</div><div class="snap-empty">not set</div></div>`;
+      }
+      const u = Math.max(0, Number(used || 0));
+      const t = Math.max(1, Number(total || 0));
+      const ratio = (u / t) * 100;
+      const pct = Math.max(0, Math.min(100, ratio));
+      const cls = ratio >= 100 ? 'bad' : (ratio >= 80 ? 'warn' : '');
+      const rem = Math.max(0, t - u);
+      const usedPct = Math.max(0, ratio).toFixed(0);
+      const remPct = Math.max(0, 100 - ratio).toFixed(0);
+      return `<div class="ag-card">
+        <div class="ag-title">${title}</div>
+        <div class="ag-track"><div class="ag-fill ${cls}" style="width:${pct}%;"></div></div>
+        <div class="ag-meta">
+          <div>Used: ${usedText(u)} / Total: ${totalText(t)} (${usedPct}%)</div>
+          <div>Remaining: ${totalText(rem)} (${remPct}%)</div>
+        </div>
+      </div>`;
+    }
+    function renderActionsUserGraphs(rows) {
+      const wrap = byId('actionsUserGraphsWrap');
+      const host = byId('actionsUserGraphs');
+      if (!wrap || !host) return;
+      if (!rows || rows.length !== 1) {
+        wrap.style.display = 'none';
+        host.innerHTML = '';
+        return;
+      }
+      const c = rows[0];
+      const downUsed = Number(c.download_since_now_bytes || 0);
+      const upUsed = Number(c.upload_since_now_bytes || 0);
+      const downLim = Number(c.traffic_limit_down_bytes || 0);
+      const upLim = Number(c.traffic_limit_up_bytes || 0);
+      const downNow = Number(c.down_speed_bps || 0);
+      const upNow = Number(c.up_speed_bps || 0);
+      const downCap = Number(c.speed_limit_down_bps || 0);
+      const upCap = Number(c.speed_limit_up_bps || 0);
+      host.innerHTML = [
+        actionGraphCard('Download Quota', downUsed, downLim, (v) => hBytes(v), (v) => hBytes(v)),
+        actionGraphCard('Upload Quota', upUsed, upLim, (v) => hBytes(v), (v) => hBytes(v)),
+        actionGraphCard('Download Speed', downNow, downCap, (v) => hBps(v), (v) => hBps(v)),
+        actionGraphCard('Upload Speed', upNow, upCap, (v) => hBps(v), (v) => hBps(v)),
+      ].join('');
+      wrap.style.display = '';
+    }
+    function parseWgHealthLine(line) {
+      const s = String(line || '').trim();
+      const m = s.match(/^([^:]+):\s*peers=(\d+)\s+active<=3m=(\d+)\s+bw=([^\s]+\s+[^\s]+)\s+running=(true|false)$/i);
+      if (!m) return null;
+      return {
+        iface: m[1],
+        peers: m[2],
+        active: m[3],
+        bw: m[4],
+        running: m[5].toLowerCase() === 'true',
+      };
+    }
+    function renderWgHealth(lines) {
+      const el = byId('wgHealth');
+      const items = Array.isArray(lines) ? lines : [];
+      if (!items.length) {
+        el.innerHTML = '<div class="meta">No WG interfaces found</div>';
+        return;
+      }
+      const parsed = items.map(parseWgHealthLine);
+      if (parsed.every((x) => x)) {
+        el.innerHTML = `<div class="wg-health-list">${parsed.map((x) => `
+          <div class="wg-health-item">
+            <div class="wg-health-top">
+              <div class="wg-iface">${txt(x.iface)}</div>
+              <div class="wg-tags">
+                <span class="wg-tag">peers: ${x.peers}</span>
+                <span class="wg-tag">active ≤3m: ${x.active}</span>
+                <span class="wg-tag">bw: ${txt(x.bw)}</span>
+                <span class="wg-tag ${x.running ? 'ok' : 'bad'}">running: ${x.running ? 'yes' : 'no'}</span>
+              </div>
+            </div>
+          </div>
+        `).join('')}</div>`;
+        return;
+      }
+      el.innerHTML = items.map((x) => `<div>${txt(x)}</div>`).join('');
+    }
+    function metricMax(values) {
+      let m = 0;
+      for (const v of values) m = Math.max(m, Number(v || 0));
+      return m <= 0 ? 1 : m;
+    }
+    function normalizeRows(rows, valueKey, maxCount = 6) {
+      const sorted = [...rows].sort((a, b) => Number(b[valueKey] || 0) - Number(a[valueKey] || 0));
+      return sorted.slice(0, maxCount);
+    }
+    function buildBars(title, rows, valueKey, valueFmt, opts = {}) {
+      if (!rows.length) return `<div class="snap-card"><div class="snap-title">${title}</div><div class="snap-empty">No data</div></div>`;
+      const maxVal = metricMax(rows.map((r) => r[valueKey]));
+      const fillClass = opts.fillClass || '';
+      return `<div class="snap-card"><div class="snap-title">${title}</div>${
+        rows.map((r) => {
+          const v = Number(r[valueKey] || 0);
+          const pct = Math.max(0, Math.min(100, (v / maxVal) * 100));
+          return `<div class="snap-row">
+            <div class="snap-label">${txt(r.name || r.ip || r.peer_id)}</div>
+            <div class="snap-track"><div class="snap-fill ${fillClass}" style="width:${pct}%;"></div></div>
+            <div class="snap-val">${valueFmt(v, r)}</div>
+          </div>`;
+        }).join('')
+      }</div>`;
+    }
+    function renderSnapshotCharts(rows) {
+      const host = byId('snapshotCharts');
+      if (!host) return;
+      const items = Array.isArray(rows) ? rows : [];
+      if (!items.length) {
+        host.innerHTML = '<div class="snap-card"><div class="snap-title">Snapshot</div><div class="snap-empty">No client data</div></div>';
+        return;
+      }
+      const topDown = normalizeRows(items, 'total_download_bytes');
+      const topUp = normalizeRows(items, 'total_upload_bytes');
+      const topNow = normalizeRows(items.map((x) => ({ ...x, combined_speed: Number(x.down_speed_bps || 0) + Number(x.up_speed_bps || 0) })), 'combined_speed');
+
+      const quotaRows = items
+        .map((x) => {
+          const dLim = Number(x.traffic_limit_down_bytes || 0);
+          const uLim = Number(x.traffic_limit_up_bytes || 0);
+          const dUsed = Number(x.download_since_now_bytes || 0);
+          const uUsed = Number(x.upload_since_now_bytes || 0);
+          const parts = [];
+          if (dLim > 0) parts.push(dUsed / dLim);
+          if (uLim > 0) parts.push(uUsed / uLim);
+          if (!parts.length) return null;
+          const ratio = Math.max(...parts);
+          return { ...x, quota_ratio: ratio };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Number(b.quota_ratio || 0) - Number(a.quota_ratio || 0))
+        .slice(0, 6);
+
+      const policyCounts = {
+        disable: 0,
+        throttle: 0,
+        trusted_only: 0,
+        overlimit_active: 0,
+        disabled: 0,
+      };
+      for (const x of items) {
+        const mode = String(x.overlimit_mode || 'disable');
+        if (mode in policyCounts) policyCounts[mode] += 1;
+        if (x.overlimit_active) policyCounts.overlimit_active += 1;
+        if (String(x.state || '') === 'disabled') policyCounts.disabled += 1;
+      }
+      const policyRows = [
+        { name: 'mode: disable', v: policyCounts.disable },
+        { name: 'mode: throttle', v: policyCounts.throttle },
+        { name: 'mode: trusted_only', v: policyCounts.trusted_only },
+        { name: 'overlimit active', v: policyCounts.overlimit_active },
+        { name: 'disabled clients', v: policyCounts.disabled },
+      ];
+      const policyMax = metricMax(policyRows.map((x) => x.v));
+      const policyCard = `<div class="snap-card"><div class="snap-title">Policy Distribution</div>${
+        policyRows.map((p) => {
+          const pct = Math.max(0, Math.min(100, (p.v / policyMax) * 100));
+          return `<div class="snap-row">
+            <div class="snap-label">${p.name}</div>
+            <div class="snap-track"><div class="snap-fill" style="width:${pct}%;"></div></div>
+            <div class="snap-val">${p.v}</div>
+          </div>`;
+        }).join('')
+      }</div>`;
+
+      const hotspots = items
+        .map((x) => {
+          const q = clientQuotaPct(x);
+          const s = clientSpeedPct(x);
+          const tags = [];
+          if (x.overlimit_active) tags.push({ t: 'over-limit active', c: 'bad' });
+          if (q !== null && q >= 100) tags.push({ t: `quota ${q.toFixed(0)}%`, c: 'bad' });
+          else if (q !== null && q >= 80) tags.push({ t: `quota ${q.toFixed(0)}%`, c: 'warn' });
+          if (s !== null && s >= 92) tags.push({ t: `speed ${s.toFixed(0)}%`, c: s >= 100 ? 'bad' : 'warn' });
+          if (!tags.length) return null;
+          return { name: x.name || x.ip || x.peer_id, tags };
+        })
+        .filter(Boolean)
+        .slice(0, 5);
+      const hotspotsCard = !hotspots.length
+        ? `<div class="snap-card"><div class="snap-title">Policy Hotspots (Top 5)</div><div class="snap-empty">No touched clients right now</div></div>`
+        : `<div class="snap-card"><div class="snap-title">Policy Hotspots (Top 5)</div>${
+            hotspots.map((h) => `
+              <div style="margin:6px 0;">
+                <div class="snap-label" style="color:var(--text);">${txt(h.name)}</div>
+                <div class="snap-badges">${h.tags.map((t) => `<span class="snap-badge ${t.c}">${t.t}</span>`).join('')}</div>
+              </div>
+            `).join('')
+          }</div>`;
+
+      const quotaCard = !quotaRows.length
+        ? `<div class="snap-card"><div class="snap-title">Quota Usage (limited users)</div><div class="snap-empty">No quota limits configured</div></div>`
+        : `<div class="snap-card"><div class="snap-title">Quota Usage (limited users)</div>${
+            quotaRows.map((r) => {
+              const pct = Math.max(0, Math.min(100, Number(r.quota_ratio || 0) * 100));
+              const cls = pct >= 100 ? 'bad' : (pct >= 80 ? 'warn' : '');
+              return `<div class="snap-row">
+                <div class="snap-label">${txt(r.name || r.ip)}</div>
+                <div class="snap-track"><div class="snap-fill ${cls}" style="width:${pct}%;"></div></div>
+                <div class="snap-val">${pct.toFixed(0)}%</div>
+              </div>`;
+            }).join('')
+          }</div>`;
+
+      host.innerHTML = [
+        buildBars('Top Download (total)', topDown, 'total_download_bytes', (v) => hBytes(v)),
+        buildBars('Top Upload (total)', topUp, 'total_upload_bytes', (v) => hBytes(v)),
+        buildBars('Current Speed Snapshot', topNow, 'combined_speed', (v) => hBps(v)),
+        quotaCard,
+        policyCard,
+        hotspotsCard,
+      ].join('');
+    }
+    function saveClientColsState() {
+      try { localStorage.setItem(CLIENT_COLS_KEY, JSON.stringify({ order: clientColOrder, widths: clientColWidths })); } catch (_) {}
+    }
+    function loadClientColsState() {
+      try {
+        const raw = localStorage.getItem(CLIENT_COLS_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.order)) clientColOrder = data.order.map((x) => String(x || ''));
+        if (data.widths && typeof data.widths === 'object') clientColWidths = data.widths;
+      } catch (_) {}
+    }
+    function ensureClientColsOrder() {
+      const table = byId('clientsTable');
+      if (!table || !table.tHead || !table.tHead.rows.length) return;
+      const all = Array.from(table.tHead.rows[0].cells).map((th) => th.dataset.col || '');
+      if (!clientColOrder.length) {
+        clientColOrder = DEFAULT_CLIENT_COL_ORDER.filter((k) => all.includes(k));
+        for (const k of all) if (!clientColOrder.includes(k)) clientColOrder.push(k);
+      }
+      const set = new Set(all);
+      clientColOrder = clientColOrder.filter((k) => set.has(k));
+      for (const k of all) if (!clientColOrder.includes(k)) clientColOrder.push(k);
+      clientColOrder = clientColOrder.filter((k) => k !== 'sel');
+      clientColOrder.unshift('sel');
+    }
+    function reorderCellsByOrder(row) {
+      const map = {};
+      for (const cell of Array.from(row.cells)) map[cell.dataset.col || ''] = cell;
+      for (const key of clientColOrder) {
+        const cell = map[key];
+        if (cell) row.appendChild(cell);
+      }
+    }
+    function applyClientColsLayout() {
+      const table = byId('clientsTable');
+      if (!table) return;
+      ensureClientColsOrder();
+      const theadRow = table.tHead?.rows?.[0];
+      if (!theadRow) return;
+      reorderCellsByOrder(theadRow);
+      for (const row of Array.from(table.tBodies[0]?.rows || [])) reorderCellsByOrder(row);
+
+      let cg = table.querySelector('colgroup');
+      if (!cg) {
+        cg = document.createElement('colgroup');
+        table.insertBefore(cg, table.tHead);
+      }
+      cg.innerHTML = '';
+      for (const key of clientColOrder) {
+        const col = document.createElement('col');
+        const w = key === 'sel' ? 44 : Number(clientColWidths[key] || 0);
+        if (w > 40) col.style.width = `${w}px`;
+        cg.appendChild(col);
+      }
+    }
+    function setupClientTableInteractions() {
+      const table = byId('clientsTable');
+      if (!table || !table.tHead || !table.tHead.rows.length) return;
+      const headers = Array.from(table.tHead.rows[0].cells);
+      for (const th of headers) {
+        const key = th.dataset.col || '';
+        if (!key) continue;
+        if (key !== 'sel' && !th.querySelector('.resize-handle')) {
+          const handle = document.createElement('span');
+          handle.className = 'resize-handle';
+          handle.addEventListener('mousedown', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const startX = ev.clientX;
+            const startW = th.getBoundingClientRect().width;
+            const onMove = (mv) => {
+              const w = Math.max(58, Math.round(startW + (mv.clientX - startX)));
+              clientColWidths[key] = w;
+              applyClientColsLayout();
+            };
+            const onUp = () => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              saveClientColsState();
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          });
+          th.appendChild(handle);
+        }
+        th.draggable = key !== 'sel';
+        th.addEventListener('dragstart', () => {
+          if (key === 'sel') return;
+          clientDraggingKey = key;
+        });
+        th.addEventListener('dragover', (ev) => {
+          if (key === 'sel') return;
+          ev.preventDefault();
+          th.classList.add('drag-over');
+        });
+        th.addEventListener('dragleave', () => th.classList.remove('drag-over'));
+        th.addEventListener('drop', (ev) => {
+          ev.preventDefault();
+          th.classList.remove('drag-over');
+          const toKey = key;
+          const fromKey = clientDraggingKey;
+          if (toKey === 'sel' || fromKey === 'sel') return;
+          if (!fromKey || !toKey || fromKey === toKey) return;
+          const from = clientColOrder.indexOf(fromKey);
+          const to = clientColOrder.indexOf(toKey);
+          if (from < 0 || to < 0) return;
+          clientColOrder.splice(from, 1);
+          clientColOrder.splice(to, 0, fromKey);
+          applyClientColsLayout();
+          saveClientColsState();
+        });
+      }
+      loadClientColsState();
+      ensureClientColsOrder();
+      if (!Object.keys(clientColWidths).length) {
+        for (const th of headers) {
+          const key = th.dataset.col || '';
+          if (!key) continue;
+          clientColWidths[key] = key === 'sel' ? 44 : Math.round(th.getBoundingClientRect().width);
+        }
+      }
+      applyClientColsLayout();
+      saveClientColsState();
     }
 
     async function api(path, options = {}) {
@@ -447,11 +1595,26 @@
       }
       const revokeBtn = byId('btnActionRevoke');
       if (revokeBtn) revokeBtn.style.display = isBatch ? 'none' : '';
-      const cfg = byId('actionsConfigSection');
-      if (cfg) cfg.style.display = mode === 'single' ? '' : 'none';
+      updateActionsConfigVisibility(mode);
     }
 
     function actionPeerIds() {
+      if (actionsForcePeerId) return [actionsForcePeerId];
+      // Always prefer explicit checkbox selection over highlighted row.
+      const body = byId('clientsBody');
+      if (body) {
+        const checked = [];
+        for (const tr of Array.from(body.querySelectorAll('tr'))) {
+          const pid = tr.dataset.peerId || '';
+          const cb = tr.querySelector('input[type="checkbox"]');
+          if (pid && cb && cb.checked) checked.push(pid);
+        }
+        if (checked.length > 0) {
+          selectedBatch.clear();
+          for (const pid of checked) selectedBatch.add(pid);
+          return checked;
+        }
+      }
       const ids = selectedRows();
       if (ids.length > 0) return ids;
       if (selectedPeerId) return [selectedPeerId];
@@ -466,6 +1629,11 @@
         byId('selectedPeer').textContent = 'none';
         byId('actionsMode').textContent = 'mode: none';
         list.innerHTML = '<div class="meta">No client selected.</div>';
+        renderActionsUserGraphs([]);
+        resetActionsDraftInputs();
+        byId('configOut').value = '';
+        configForPeerId = null;
+        hasGeneratedConfig = false;
         setActionButtonsState('none');
         return;
       }
@@ -483,6 +1651,7 @@
           </table>
         </div>
       `;
+      renderActionsUserGraphs(rows);
 
       if (rows.length === 1) {
         const c = rows[0];
@@ -494,6 +1663,16 @@
         byId('plMode').value = (c.overlimit_mode || 'disable');
         byId('plOverDown').value = c.overlimit_speed_down_bps > 0 ? fmtFormNumber(Number(c.overlimit_speed_down_bps) / 1_000_000) : '';
         byId('plOverUp').value = c.overlimit_speed_up_bps > 0 ? fmtFormNumber(Number(c.overlimit_speed_up_bps) / 1_000_000) : '';
+        if (configForPeerId && configForPeerId !== c.peer_id) {
+          byId('configOut').value = '';
+          configForPeerId = null;
+          hasGeneratedConfig = false;
+        }
+      } else {
+        resetActionsDraftInputs();
+        byId('configOut').value = '';
+        configForPeerId = null;
+        hasGeneratedConfig = false;
       }
     }
 
@@ -502,7 +1681,15 @@
       const c = clientsCache.find(x => x.peer_id === peerId);
       byId('selectedPeer').textContent = c ? `${txt(c.name)} (${peerId})` : peerId;
       refreshActionsModal();
-      renderClients();
+      updateClientSelectionHighlight();
+    }
+    function openActionsForPeer(peerId) {
+      selectedBatch.clear();
+      selectPeer(peerId);
+      actionsForcePeerId = peerId;
+      const m = byId('actionsModal');
+      if (m) m.classList.add('show');
+      refreshActionsModal();
     }
 
     function renderClients() {
@@ -515,8 +1702,8 @@
       if (disabledOnly) rows = rows.filter(c => c.state === 'disabled');
 
       rows.sort((a, b) => {
-        const av = a[sortKey];
-        const bv = b[sortKey];
+        const av = sortKey === 'quota_pct' ? (clientQuotaPct(a) ?? -1) : (sortKey === 'speed_pct' ? (clientSpeedPct(a) ?? -1) : a[sortKey]);
+        const bv = sortKey === 'quota_pct' ? (clientQuotaPct(b) ?? -1) : (sortKey === 'speed_pct' ? (clientSpeedPct(b) ?? -1) : b[sortKey]);
         if (typeof av === 'number' && typeof bv === 'number') return sortDesc ? (bv - av) : (av - bv);
         const aa = txt(av).toLowerCase();
         const bb = txt(bv).toLowerCase();
@@ -540,30 +1727,56 @@
       refreshBatchCount();
       for (const c of rows) {
         const tr = document.createElement('tr');
-        tr.className = `${selectedPeerId === c.peer_id ? 'selected ' : ''}${c.state === 'disabled' ? 'disabled' : ''}`;
+        tr.dataset.peerId = c.peer_id;
+        const downLim = Number(c.traffic_limit_down_bytes || 0);
+        const upLim = Number(c.traffic_limit_up_bytes || 0);
+        const downUsed = Number(c.download_since_now_bytes || 0);
+        const upUsed = Number(c.upload_since_now_bytes || 0);
+        const quotaReached = (downLim > 0 && downUsed >= downLim) || (upLim > 0 && upUsed >= upLim);
+        const downCap = Number(c.speed_limit_down_bps || 0);
+        const upCap = Number(c.speed_limit_up_bps || 0);
+        const nearSpeedCap = (downCap > 0 && Number(c.down_speed_bps || 0) >= downCap * 0.92)
+          || (upCap > 0 && Number(c.up_speed_bps || 0) >= upCap * 0.92);
+        const limited = Boolean(c.overlimit_active) || quotaReached || nearSpeedCap;
+        tr.className = `${selectedPeerId === c.peer_id ? 'selected ' : ''}${limited ? 'limited ' : ''}${c.state === 'disabled' ? 'disabled' : ''}`;
         tr.onclick = () => selectPeer(c.peer_id);
+        tr.ondblclick = () => openActionsForPeer(c.peer_id);
         const checked = selectedBatch.has(c.peer_id) ? 'checked' : '';
         tr.innerHTML = `
-          <td><input type="checkbox" ${checked} onclick="event.stopPropagation();toggleBatch('${c.peer_id}', this.checked)" /></td>
-          <td>${txt(c.name)}</td>
-          <td>${txt(c.ip)}</td>
-          <td>${txt(c.interface)}</td>
-          <td>${txt(c.state)}</td>
-          <td>${txt(c.download_since_now)}</td>
-          <td>${txt(c.upload_since_now)}</td>
-          <td>${txt(c.down_speed)}</td>
-          <td>${txt(c.up_speed)}</td>
-          <td>${c.traffic_limit_down_bytes > 0 ? hBytes(c.traffic_limit_down_bytes) : 'not set'}</td>
-          <td>${c.traffic_limit_up_bytes > 0 ? hBytes(c.traffic_limit_up_bytes) : 'not set'}</td>
-          <td>${hPeriod(c.traffic_period_seconds)}</td>
-          <td>${txt(c.overlimit_mode)}</td>
-          <td>${c.overlimit_speed_down_bps > 0 ? hBps(c.overlimit_speed_down_bps) : 'not set'}</td>
-          <td>${c.overlimit_speed_up_bps > 0 ? hBps(c.overlimit_speed_up_bps) : 'not set'}</td>
-          <td>${c.overlimit_active ? 'yes' : 'no'}</td>
-          <td>${c.speed_limit_down_bps > 0 ? hBps(c.speed_limit_down_bps) : 'not set'}</td>
-          <td>${c.speed_limit_up_bps > 0 ? hBps(c.speed_limit_up_bps) : 'not set'}</td>
+          <td data-col="sel"><input type="checkbox" ${checked} onclick="event.stopPropagation();toggleBatch('${c.peer_id}', this.checked)" /></td>
+          <td data-col="name">${txt(c.name)}</td>
+          <td data-col="ip">${txt(c.ip)}</td>
+          <td data-col="interface">${txt(c.interface)}</td>
+          <td data-col="state">${txt(c.state)}</td>
+          <td data-col="down">${txt(c.download_since_now)}</td>
+          <td data-col="up">${txt(c.upload_since_now)}</td>
+          <td data-col="dspd">${txt(c.down_speed)}</td>
+          <td data-col="uspd">${txt(c.up_speed)}</td>
+          <td data-col="dlim">${c.traffic_limit_down_bytes > 0 ? hBytes(c.traffic_limit_down_bytes) : 'not set'}</td>
+          <td data-col="ulim">${c.traffic_limit_up_bytes > 0 ? hBytes(c.traffic_limit_up_bytes) : 'not set'}</td>
+          <td data-col="period">${hPeriod(c.traffic_period_seconds)}</td>
+          <td data-col="omode">${txt(c.overlimit_mode)}</td>
+          <td data-col="odown">${c.overlimit_speed_down_bps > 0 ? hBps(c.overlimit_speed_down_bps) : 'not set'}</td>
+          <td data-col="oup">${c.overlimit_speed_up_bps > 0 ? hBps(c.overlimit_speed_up_bps) : 'not set'}</td>
+          <td data-col="oact">${c.overlimit_active ? 'yes' : 'no'}</td>
+          <td data-col="slimd">${c.speed_limit_down_bps > 0 ? hBps(c.speed_limit_down_bps) : 'not set'}</td>
+          <td data-col="slimu">${c.speed_limit_up_bps > 0 ? hBps(c.speed_limit_up_bps) : 'not set'}</td>
+          <td data-col="qpct">${miniBarHtml(clientQuotaPct(c))}</td>
+          <td data-col="spct">${miniBarHtml(clientSpeedPct(c))}</td>
         `;
         body.appendChild(tr);
+      }
+      applyClientColsLayout();
+      updateClientSelectionHighlight();
+    }
+
+    function updateClientSelectionHighlight() {
+      const body = byId('clientsBody');
+      if (!body) return;
+      for (const tr of Array.from(body.querySelectorAll('tr'))) {
+        const pid = tr.dataset.peerId || '';
+        if (pid && pid === selectedPeerId) tr.classList.add('selected');
+        else tr.classList.remove('selected');
       }
     }
 
@@ -602,6 +1815,136 @@
       }
     }
 
+    function profileFormPayload() {
+      return {
+        name: val('pmName'),
+        router_ip: val('pmRouterIp'),
+        user: val('pmUser'),
+        password: val('pmPassword'),
+        endpoint_ip: val('pmEndpointIp'),
+        dns_servers: val('pmDns'),
+        transport: val('pmTransport') || 'rest',
+        timeout_sec: val('pmTimeout'),
+        use_https: val('pmUseHttps'),
+        exempt_traffic_dst_list: val('pmExemptList'),
+      };
+    }
+
+    function fillProfileForm(p) {
+      byId('pmName').value = txt(p.name) === 'not set' ? '' : txt(p.name);
+      byId('pmRouterIp').value = txt(p.router_ip) === 'not set' ? '' : txt(p.router_ip);
+      byId('pmUser').value = txt(p.user) === 'not set' ? '' : txt(p.user);
+      byId('pmPassword').value = txt(p.password) === 'not set' ? '' : txt(p.password);
+      byId('pmEndpointIp').value = txt(p.endpoint_ip) === 'not set' ? '' : txt(p.endpoint_ip);
+      byId('pmDns').value = txt(p.dns_servers) === 'not set' ? '' : txt(p.dns_servers);
+      byId('pmTransport').value = txt(p.transport) === 'not set' ? 'rest' : txt(p.transport);
+      byId('pmTimeout').value = txt(p.timeout_sec) === 'not set' ? '' : txt(p.timeout_sec);
+      byId('pmUseHttps').value = txt(p.use_https) === 'not set' ? '' : txt(p.use_https);
+      byId('pmExemptList').value = txt(p.exempt_traffic_dst_list) === 'not set' ? '' : txt(p.exempt_traffic_dst_list);
+    }
+
+    function renderProfileList(currentName = '') {
+      const box = byId('profileList');
+      if (!box) return;
+      box.innerHTML = '';
+      for (const p of profileManagerRows) {
+        const row = document.createElement('div');
+        row.className = `profile-item ${profileManagerEditName === p.name ? 'active' : ''}`;
+        row.textContent = `${p.name} (${txt(p.router_ip)}) [${txt(p.transport)}]`;
+        row.onclick = () => editProfile(p.name);
+        box.appendChild(row);
+      }
+      byId('pmCurrent').textContent = `current: ${currentName || '-'}`;
+      byId('pmMode').textContent = profileManagerEditName ? `mode: edit (${profileManagerEditName})` : 'mode: create';
+    }
+
+    function newProfileForm() {
+      profileManagerEditName = null;
+      fillProfileForm({
+        name: '', router_ip: '', user: '', password: '', endpoint_ip: '', dns_servers: '',
+        transport: 'rest', timeout_sec: '', use_https: '', exempt_traffic_dst_list: '',
+      });
+      renderProfileList(byId('profileSelect')?.value || '');
+    }
+
+    async function editProfile(name) {
+      try {
+        const p = await api(`/api/profiles/${encodeURIComponent(name)}`);
+        profileManagerEditName = p.name;
+        fillProfileForm(p);
+        renderProfileList(byId('profileSelect')?.value || '');
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function loadProfileManager() {
+      try {
+        const data = await api('/api/profiles');
+        profileManagerRows = data.profiles || [];
+        renderProfileList(data.current || '');
+        if (profileManagerEditName) {
+          const found = profileManagerRows.find(x => x.name === profileManagerEditName);
+          if (found) {
+            await editProfile(profileManagerEditName);
+            return;
+          }
+        }
+        newProfileForm();
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function openProfileModal() {
+      openModal('profileModal');
+      await loadProfileManager();
+    }
+
+    async function saveProfile() {
+      try {
+        const body = profileFormPayload();
+        if (!body.name) { setStatus('Profile name is required', true); return; }
+        if (!body.router_ip || !body.user || !body.password) { setStatus('router_ip, user, password are required', true); return; }
+        if (profileManagerEditName) {
+          await api(`/api/profiles/${encodeURIComponent(profileManagerEditName)}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              new_name: body.name,
+              router_ip: body.router_ip,
+              user: body.user,
+              password: body.password,
+              endpoint_ip: body.endpoint_ip,
+              dns_servers: body.dns_servers,
+              transport: body.transport,
+              timeout_sec: body.timeout_sec,
+              use_https: body.use_https,
+              exempt_traffic_dst_list: body.exempt_traffic_dst_list,
+            }),
+          });
+          profileManagerEditName = body.name;
+          setStatus(`profile updated: ${body.name}`);
+        } else {
+          await api('/api/profiles', { method: 'POST', body: JSON.stringify(body) });
+          profileManagerEditName = body.name;
+          setStatus(`profile created: ${body.name}`);
+        }
+        await loadProfiles();
+        await loadProfileManager();
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function deleteProfile() {
+      try {
+        const name = profileManagerEditName || val('pmName');
+        if (!name) { setStatus('Select profile to delete', true); return; }
+        if (!confirm(`Delete router profile "${name}" from .env?`)) return;
+        await api(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        setStatus(`profile deleted: ${name}`);
+        profileManagerEditName = null;
+        await loadProfiles();
+        await loadProfileManager();
+        await refreshAll(false);
+      } catch (e) { setStatus(e.message, true); }
+    }
+
     async function selectProfile() {
       try {
         await api('/api/profiles/select', { method: 'POST', body: JSON.stringify({ name: byId('profileSelect').value }) });
@@ -633,7 +1976,7 @@
       byId('alerts').innerHTML = (data.alerts || []).length
         ? data.alerts.map(a => `<span class="warn">${a}</span>`).join(' | ')
         : '<span class="ok">No alerts</span>';
-      byId('wgHealth').innerHTML = (data.wg_health || []).map(x => `<div>${x}</div>`).join('') || '<div class="meta">No WG interfaces found</div>';
+      renderWgHealth(data.wg_health || []);
     }
 
     async function loadInterfaceStats() {
@@ -679,11 +2022,14 @@
         o.textContent = `${i.name} (listen:${i.listen_port || '?'})`;
         sel.appendChild(o);
       }
+      bindAddFormValidation();
+      if (sel.value) await loadAddIfacePoolInfo(sel.value);
     }
 
     async function loadClients() {
       const data = await api('/api/clients');
       clientsCache = data.items || [];
+      renderSnapshotCharts(clientsCache);
       const exists = new Set(clientsCache.map(x => x.peer_id));
       for (const pid of Array.from(selectedBatch)) {
         if (!exists.has(pid)) selectedBatch.delete(pid);
@@ -721,11 +2067,51 @@
         const iface = byId('addIface').value;
         const data = await api(`/api/interfaces/${encodeURIComponent(iface)}/suggest-ip`);
         byId('addIp').value = data.ip;
+        await loadAddIfacePoolInfo(iface);
       } catch (e) { setStatus(e.message, true); }
+    }
+
+    async function validateAddClientForm() {
+      sanitizeCommentInput();
+      sanitizeIpv4Input('addIp');
+      sanitizePeriodInput();
+      for (const id of ['addSpeedDown', 'addSpeedUp', 'addLimitDown', 'addLimitUp', 'addOverDown', 'addOverUp']) {
+        sanitizeEnglishNumberInput(id);
+      }
+      const iface = val('addIface');
+      const ip = val('addIp');
+      const comment = val('addComment');
+      if (!iface) { setStatus('Interface is required', true); return false; }
+      if (!ip || ipv4ToInt(ip) === null) { setStatus('IP must be valid IPv4 (English digits)', true); return false; }
+      const info = await loadAddIfacePoolInfo(iface);
+      if (!info || !info.cidr) { setStatus('Cannot validate interface network right now', true); return false; }
+      if (!ipInCidr(ip, info.cidr)) { setStatus(`IP must be in interface range ${info.cidr}`, true); return false; }
+      if (String(info.interface_ip || '') === ip) { setStatus('IP cannot be the interface IP', true); return false; }
+      if (Array.isArray(info.used_ips) && info.used_ips.includes(ip)) { setStatus('IP is already used', true); return false; }
+      if (comment && !/^[A-Za-z0-9 -]{1,32}$/.test(comment)) {
+        setStatus('Comment: only English letters/digits/space/-, max 32 chars', true);
+        return false;
+      }
+      const numIds = ['addSpeedDown', 'addSpeedUp', 'addLimitDown', 'addLimitUp', 'addOverDown', 'addOverUp'];
+      for (const id of numIds) {
+        const v = val(id);
+        if (!v) continue;
+        if (!/^[0-9]+(\.[0-9]+)?$/.test(v) || v.length > 16) {
+          setStatus(`${id} must be English number with optional dot (max 16 chars)`, true);
+          return false;
+        }
+      }
+      const period = val('addPeriod');
+      if (period && !validPeriodText(period)) {
+        setStatus('Period format invalid (examples: 1d, 2h, 30m, 0)', true);
+        return false;
+      }
+      return true;
     }
 
     async function addClient() {
       try {
+        if (!(await validateAddClientForm())) return;
         const body = {
           interface: val('addIface'),
           ip: val('addIp'),
@@ -741,7 +2127,10 @@
         };
         const out = await api('/api/clients', { method: 'POST', body: JSON.stringify(body) });
         byId('configOut').value = out.config || '';
+        byId('addConfigOut').value = out.config || '';
         lastConfigFilename = out.filename || 'client.conf';
+        configForPeerId = out.peer_id || null;
+        hasGeneratedConfig = Boolean((out.config || '').trim());
         selectedPeerId = out.peer_id || null;
         await refreshAll();
         setStatus(`client created: ${out.peer_id || '?'}`);
@@ -893,7 +2282,11 @@
         const out = await api(`/api/clients/${encodeURIComponent(peer)}/revoke`, { method: 'POST' });
         byId('configOut').value = out.config || '';
         lastConfigFilename = out.filename || 'client.conf';
+        configForPeerId = peer;
+        hasGeneratedConfig = Boolean((out.config || '').trim());
         await refreshAll();
+        openModal('actionsModal');
+        refreshActionsModal();
       } catch (e) { setStatus(e.message, true); }
     }
 
@@ -964,7 +2357,6 @@
     async function exportUsersJson() {
       try {
         const out = await api('/api/exports/users.json');
-        byId('configOut').value = JSON.stringify(out.data, null, 2);
         setStatus(`users json exported: ${out.file}`);
       } catch (e) { setStatus(e.message, true); }
     }
@@ -1006,6 +2398,23 @@
       URL.revokeObjectURL(a.href);
       setStatus('config file prepared');
     }
+    async function copyAddConfig() {
+      try {
+        await navigator.clipboard.writeText(byId('addConfigOut').value || '');
+        setStatus('add config copied to clipboard');
+      } catch (e) { setStatus(`copy failed: ${e.message}`, true); }
+    }
+    function downloadAddConfig() {
+      const content = byId('addConfigOut').value || '';
+      if (!content.trim()) { setStatus('no add config to save', true); return; }
+      const blob = new Blob([content + '\n'], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = lastConfigFilename || 'client.conf';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus('add config file prepared');
+    }
 
     function toggleAuto() {
       if (autoTimer) {
@@ -1037,7 +2446,9 @@
 
     (async () => {
       try {
+        initTheme();
         await loadProfiles();
+        setupClientTableInteractions();
         await refreshAll();
         await runDiagnostics();
         document.querySelectorAll('.modal').forEach((m) => {
@@ -1045,8 +2456,14 @@
             if (ev.target === m) m.classList.remove('show');
           });
         });
+        document.addEventListener('click', (ev) => {
+          const dd = byId('actionsDropdown');
+          if (!dd) return;
+          if (!dd.contains(ev.target)) closeActionsMenu();
+        });
         document.addEventListener('keydown', (ev) => {
           if (ev.key === 'Escape') {
+            closeActionsMenu();
             document.querySelectorAll('.modal.show').forEach((m) => m.classList.remove('show'));
           }
         });

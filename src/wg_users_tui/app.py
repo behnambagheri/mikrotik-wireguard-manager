@@ -530,6 +530,18 @@ class ApiSslClient:
         replies = self._talk(words)
         return self._parse(replies)
 
+    def _remove_with_fallback(self, path: str, rid: str) -> None:
+        # Some RouterOS API versions expect "numbers" on remove commands
+        # while newer ones accept ".id". Try ".id" first, then fallback.
+        try:
+            self._cmd(path, {".id": rid})
+            return
+        except RuntimeError as e:
+            msg = str(e).lower()
+            if ("no such item" in msg) or ("invalid internal item number" in msg):
+                raise
+        self._cmd(path, {"numbers": rid})
+
     def _login(self) -> None:
         rows = self._talk(["/login", f"=name={self.user}", f"=password={self.password}"])
         # If login failed _parse would raise trap message.
@@ -592,7 +604,7 @@ class ApiSslClient:
         self._cmd("/interface/wireguard/peers/add", payload)
 
     def delete_peer(self, peer_id: str) -> None:
-        self._cmd("/interface/wireguard/peers/remove", {".id": peer_id})
+        self._remove_with_fallback("/interface/wireguard/peers/remove", peer_id)
 
     def create_queue(self, payload: Dict[str, Any]) -> None:
         self._cmd("/queue/tree/add", payload)
@@ -603,7 +615,7 @@ class ApiSslClient:
         self._cmd("/queue/tree/set", p)
 
     def delete_queue(self, qid: str) -> None:
-        self._cmd("/queue/tree/remove", {".id": qid})
+        self._remove_with_fallback("/queue/tree/remove", qid)
 
     def create_mangle(self, payload: Dict[str, Any]) -> None:
         self._cmd("/ip/firewall/mangle/add", payload)
@@ -614,7 +626,7 @@ class ApiSslClient:
         self._cmd("/ip/firewall/mangle/set", p)
 
     def delete_mangle(self, rid: str) -> None:
-        self._cmd("/ip/firewall/mangle/remove", {".id": rid})
+        self._remove_with_fallback("/ip/firewall/mangle/remove", rid)
 
     def create_filter(self, payload: Dict[str, Any]) -> None:
         self._cmd("/ip/firewall/filter/add", payload)
@@ -625,7 +637,7 @@ class ApiSslClient:
         self._cmd("/ip/firewall/filter/set", p)
 
     def delete_filter(self, rid: str) -> None:
-        self._cmd("/ip/firewall/filter/remove", {".id": rid})
+        self._remove_with_fallback("/ip/firewall/filter/remove", rid)
 
     def create_scheduler(self, payload: Dict[str, Any]) -> None:
         self._cmd("/system/scheduler/add", payload)
@@ -636,7 +648,7 @@ class ApiSslClient:
         self._cmd("/system/scheduler/set", p)
 
     def delete_scheduler(self, rid: str) -> None:
-        self._cmd("/system/scheduler/remove", {".id": rid})
+        self._remove_with_fallback("/system/scheduler/remove", rid)
 
 
 class StateStore:

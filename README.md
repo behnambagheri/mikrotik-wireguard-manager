@@ -1,11 +1,11 @@
-# WireGuard Users Traffic Monitor TUI
+# WireGuard Users Traffic Monitor Web
 
 [![Test](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/test.yml/badge.svg)](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/test.yml)
 [![Lint](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/lint.yml/badge.svg)](https://github.com/behnambagheri/mikrotik-wireguard-manager/actions/workflows/lint.yml)
 
-Use this terminal application to manage your MikroTik RouterOS WireGuard users across multiple routers.
+Use this web application to manage your MikroTik RouterOS WireGuard users across multiple routers.
 
-Web mode is available with API + browser UI.
+The terminal TUI is still available as a secondary interface.
 
 ## Features
 
@@ -40,20 +40,26 @@ Web mode is available with API + browser UI.
 
 ## Quick Start
 
-Run:
+Run the web app:
+
+```bash
+pip install -r requirements-web.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8088
+```
+
+Then open `http://127.0.0.1:8088`.
+
+Equivalent app-native runner:
+
+```bash
+python3 main.py
+```
+
+TUI:
 
 ```bash
 python3 wg_tui.py
 ```
-
-Web:
-
-```bash
-pip install -r requirements-web.txt
-PYTHONPATH=src python3 -m wg_users_tui.web_cli --host 0.0.0.0 --port 8088
-```
-
-Then open `http://127.0.0.1:8088`.
 
 Web highlights:
 
@@ -118,6 +124,7 @@ Press `?` on any screen.
 ## Project Layout
 
 - `wg_tui.py` compatibility launcher
+- `main.py` FastAPI entrypoint for `uvicorn main:app`
 - `src/wg_users_tui/app.py` core TUI + RouterOS logic
 - `src/wg_users_tui/cli.py` CLI entry/help
 - `src/wg_users_tui/web.py` FastAPI web API + static UI mount

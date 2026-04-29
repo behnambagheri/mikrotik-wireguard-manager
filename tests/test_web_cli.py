@@ -1,4 +1,5 @@
 import os
+import importlib.util
 import sys
 import types
 import unittest
@@ -67,6 +68,23 @@ class TestWebCli(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {"status": "ok", "default": "Asiatech_LAP"})
         manager.set_default_profile.assert_called_once_with("Asiatech_LAP")
+
+    def test_root_main_exposes_fastapi_app(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "main.py")
+        spec = importlib.util.spec_from_file_location("test_root_main", path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+
+        fake_app = object()
+        fake_web = types.SimpleNamespace(app=fake_app, create_app=mock.Mock(return_value=fake_app))
+        fake_pkg = types.ModuleType("wg_users_tui")
+        with mock.patch.dict(sys.modules, {"wg_users_tui": fake_pkg, "wg_users_tui.web": fake_web}):
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+        self.assertIs(module.app, fake_app)
+        self.assertTrue(callable(module.create_app))
 
 
 if __name__ == "__main__":

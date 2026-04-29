@@ -647,8 +647,7 @@ class WebManager:
                 p = self._peer_by_id(peer_id)
                 if self.engine.client is None:
                     raise RuntimeError("Router client is not initialized")
-                self.engine.client.delete_peer(p.peer_id)
-                self.engine.state.save()
+                self.engine.delete_peer_and_cleanup(p)
                 self.engine.refresh_data(force=True)
 
     def batch_delete_clients(self, peer_ids: List[str]) -> Dict[str, Any]:
@@ -666,9 +665,9 @@ class WebManager:
                     if pid not in existing:
                         skipped.append(pid)
                         continue
-                    self.engine.client.delete_peer(pid)
+                    p = self._peer_by_id(pid)
+                    self.engine.delete_peer_and_cleanup(p)
                     deleted.append(pid)
-                self.engine.state.save()
                 self.engine.refresh_data(force=True)
                 return {"deleted": deleted, "skipped": skipped, "requested": len(req)}
 

@@ -703,6 +703,10 @@ class StateStore:
         peers = self.data.setdefault("peers", {})
         return peers.setdefault(pid, {})
 
+    def delete_peer(self, pid: str) -> None:
+        peers = self.data.setdefault("peers", {})
+        peers.pop(pid, None)
+
 
 class App:
     def __init__(self, stdscr: Any):
@@ -2344,7 +2348,7 @@ class App:
             self.status = "Delete cancelled"
             return
         try:
-            self.client.delete_peer(p.peer_id)
+            self.delete_peer_and_cleanup(p)
             self.status = f"Deleted peer {p.comment or p.ip}"
             self.error = ""
             self.refresh_data(force=True)
@@ -2919,8 +2923,72 @@ class App:
         up_comment, down_comment = self.exempt_rule_comments(p)
         for r in mangle:
             c = str(r.get("comment", ""))
-            if c == up_comment or c == down_comment:
+            if c == up_comment or c == down_comment or self._wg_tui_row_matches_peer(p, r):
                 self.client.delete_mangle(str(r.get(".id")))
+
+    def _wg_tui_row_matches_peer(self, p: PeerView, row: Dict[str, Any]) -> bool:
+        text = " ".join(
+            str(row.get(k, "") or "")
+            for k in ("name", "comment", "on-event")
+        )
+        marker = f"| {p.peer_id} | wg-tui"
+        legacy = f"{MARKER_PREFIX}:{p.peer_id}:"
+        return marker in text or legacy in text
+
+    def cleanup_peer_router_artifacts(self, p: PeerView) -> None:
+        if self.client is None:
+            raise RuntimeError("Router client is not initialized")
+
+        errors: List[str] = []
+
+        def run(label: str, fn) -> None:
+            try:
+                fn()
+            except Exception as e:
+                errors.append(f"{label}: {e}")
+
+        run("policy schedulers/exempt counters", lambda: self.uninstall_remote_policy(p))
+        run("trusted-only filter", lambda: self.apply_trusted_only_rule(p, enabled=False))
+        run("speed queues", lambda: self.apply_speed_rules(p, down_bps=0, up_bps=0))
+
+        check_name, reset_name = self.scheduler_names(p)
+
+        def remove_leftover_schedulers() -> None:
+            for row in self.client.list_scheduler() or []:
+                name = str(row.get("name", "") or "")
+                if name in (check_name, reset_name) or self._wg_tui_row_matches_peer(p, row):
+                    self.client.delete_scheduler(str(row.get(".id")))
+
+        def remove_leftover_mangle() -> None:
+            for row in self.client.list_mangle() or []:
+                if self._wg_tui_row_matches_peer(p, row):
+                    self.client.delete_mangle(str(row.get(".id")))
+
+        def remove_leftover_filter() -> None:
+            for row in self.client.list_filter() or []:
+                if self._wg_tui_row_matches_peer(p, row):
+                    self.client.delete_filter(str(row.get(".id")))
+
+        def remove_leftover_queues() -> None:
+            for row in self.client.list_queue_tree() or []:
+                if self._wg_tui_row_matches_peer(p, row):
+                    self.client.delete_queue(str(row.get(".id")))
+
+        run("leftover schedulers", remove_leftover_schedulers)
+        run("leftover mangle rules", remove_leftover_mangle)
+        run("leftover filter rules", remove_leftover_filter)
+        run("leftover queues", remove_leftover_queues)
+
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
+    def delete_peer_and_cleanup(self, p: PeerView) -> None:
+        if self.client is None:
+            raise RuntimeError("Router client is not initialized")
+        self.cleanup_peer_router_artifacts(p)
+        self.client.delete_peer(p.peer_id)
+        self.state.delete_peer(p.peer_id)
+        self.state.save()
 
     def build_policy_check_script(self, p: PeerView, st: Dict[str, Any], check_name: str, reset_name: str) -> str:
         # Router-side minute loop:

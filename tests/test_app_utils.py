@@ -117,6 +117,11 @@ WG_WEB_DEFAULT_PROFILE=Router1
             loaded = app.StateStore(path)
             self.assertEqual(loaded.peer("*1")["baseline_rx"], 123)
 
+            loaded.delete_peer("*1")
+            loaded.save()
+            reloaded = app.StateStore(path)
+            self.assertNotIn("*1", reloaded.data.get("peers", {}))
+
     def test_build_visible_peers_filter_and_sort(self):
         with mock.patch.dict(os.environ, {"WG_TUI_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
             a = app.App(DummyStdScr())
@@ -371,6 +376,82 @@ WG_WEB_DEFAULT_PROFILE=Router1
         finally:
             release.set()
             t.join(timeout=1)
+
+    def test_delete_peer_and_cleanup_removes_router_artifacts_and_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            state_path = os.path.join(td, "state.json")
+            with mock.patch.dict(
+                os.environ,
+                {"WG_TUI_ENV_FILE": "/tmp/does-not-exist", "WG_TUI_STATE_FILE": state_path},
+                clear=False,
+            ):
+                a = app.App(DummyStdScr())
+
+            p = app.PeerView(
+                peer_id="*ABC",
+                interface="wireguard",
+                ip="100.100.100.50",
+                comment="Deleted User",
+                rx=0,
+                tx=0,
+                disabled=False,
+            )
+            a.state.peer(p.peer_id)["traffic_limit_down_bytes"] = 123
+
+            class FakeClient:
+                def __init__(self):
+                    self.deleted_peer = ""
+                    self.deleted_schedulers = []
+                    self.deleted_mangle = []
+                    self.deleted_filter = []
+                    self.deleted_queue = []
+
+                def list_scheduler(self):
+                    return [
+                        {".id": "*s1", "name": "wg-tui-check-abc", "on-event": ""},
+                        {".id": "*s2", "name": "old-name", "on-event": "| *ABC | wg-tui old script"},
+                    ]
+
+                def delete_scheduler(self, rid):
+                    self.deleted_schedulers.append(rid)
+
+                def list_mangle(self):
+                    return [
+                        {".id": "*m1", "comment": "Old User | *ABC | wg-tui exempt up"},
+                        {".id": "*m2", "comment": "Old User | *ABC | wg-tui mangle down"},
+                    ]
+
+                def delete_mangle(self, rid):
+                    self.deleted_mangle.append(rid)
+
+                def list_filter(self):
+                    return [{".id": "*f1", "comment": "Old User | *ABC | wg-tui trusted-only"}]
+
+                def delete_filter(self, rid):
+                    self.deleted_filter.append(rid)
+
+                def list_queue_tree(self):
+                    return [{".id": "*q1", "comment": "Old User | *ABC | wg-tui queue down"}]
+
+                def delete_queue(self, rid):
+                    self.deleted_queue.append(rid)
+
+                def delete_peer(self, peer_id):
+                    self.deleted_peer = peer_id
+
+            fake = FakeClient()
+            a.client = fake
+
+            a.delete_peer_and_cleanup(p)
+
+            self.assertEqual(fake.deleted_peer, "*ABC")
+            self.assertIn("*s1", fake.deleted_schedulers)
+            self.assertIn("*s2", fake.deleted_schedulers)
+            self.assertIn("*m1", fake.deleted_mangle)
+            self.assertIn("*m2", fake.deleted_mangle)
+            self.assertIn("*f1", fake.deleted_filter)
+            self.assertIn("*q1", fake.deleted_queue)
+            self.assertNotIn("*ABC", a.state.data.get("peers", {}))
 
 
 if __name__ == "__main__":

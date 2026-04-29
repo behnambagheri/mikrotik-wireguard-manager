@@ -9,3 +9,4 @@ LOCAL_NOTES.md
 *.conf
 client-configs/
 *.pdf
+.codex

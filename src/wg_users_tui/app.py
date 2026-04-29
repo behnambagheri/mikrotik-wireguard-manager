@@ -22,6 +22,7 @@ CFG_ALLOWED_IPS = "0.0.0.0/0"
 CFG_ENDPOINT_HOST = "77.74.202.60"
 CFG_KEEPALIVE = "25"
 CFG_EXEMPT_DST_LIST = "quota_exempt"
+DEFAULT_PROFILE_ENV_KEYS = ("DEFAULT_ROUTER_PROFILE", "WG_DEFAULT_PROFILE", "WG_WEB_DEFAULT_PROFILE")
 
 
 def env_file_path() -> str:
@@ -41,6 +42,30 @@ def load_dotenv(path: str = ".env") -> None:
             v = v.strip().strip('"').strip("'")
             if k and k not in os.environ:
                 os.environ[k] = v
+
+
+def get_default_profile_name(path: Optional[str] = None) -> str:
+    env_path = path or env_file_path()
+    file_values: Dict[str, str] = {}
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                key = k.strip()
+                if key in DEFAULT_PROFILE_ENV_KEYS:
+                    file_values[key] = v.strip().strip('"').strip("'")
+    for key in DEFAULT_PROFILE_ENV_KEYS:
+        value = file_values.get(key, "").strip()
+        if value:
+            return value
+    for key in DEFAULT_PROFILE_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def parse_router_profiles(path: str = ".env") -> Dict[str, Dict[str, str]]:
@@ -973,7 +998,8 @@ class App:
         # Multi-router profile mode from .env:
         # profile={user=...,password=...,router_ip=...,endpoint_ip=...,dns_servers=...}
         if self.profiles:
-            selected = self.select_profile_dialog()
+            preferred = get_default_profile_name(ef)
+            selected = preferred if preferred in self.profiles else self.select_profile_dialog()
             if selected is None:
                 raise RuntimeError("No router selected")
             self.connect_profile(selected, self.profiles[selected])
@@ -2664,6 +2690,24 @@ class App:
 
     def reset_usage(self, p: PeerView) -> None:
         st = self.state.peer(p.peer_id)
+        mode = str(st.get("overlimit_mode", "disable") or "disable")
+        normal_down = int(st.get("speed_limit_down_bps", 0) or 0)
+        normal_up = int(st.get("speed_limit_up_bps", 0) or 0)
+        if bool(st.get("overlimit_active", False)):
+            try:
+                if mode == "trusted_only":
+                    self.apply_trusted_only_rule(p, enabled=False)
+                else:
+                    self.apply_speed_rules(p, down_bps=normal_down, up_bps=normal_up)
+            except Exception as e:
+                self.error = f"Failed to restore normal limits during reset: {e}"
+        if bool(st.get("disabled_by_policy", False)) and p.disabled:
+            try:
+                self.client.set_peer_disabled(p.peer_id, False)
+            except Exception as e:
+                self.error = f"Failed to re-enable peer during reset: {e}"
+        st["overlimit_active"] = False
+        st["disabled_by_policy"] = False
         st["baseline_rx"] = p.rx
         st["baseline_tx"] = p.tx
         try:
@@ -2999,22 +3043,37 @@ class App:
     def build_policy_reset_script(self, p: PeerView, st: Dict[str, Any], check_name: str) -> str:
         # Period reset loop:
         # - baseline := current counters
-        # - clear over-limit artifacts
+        # - restore normal queue/filter state
         # - re-enable peer if policy disabled it
         mode = str(st.get("overlimit_mode", "disable") or "disable")
+        sid = slug((p.comment or p.ip), max_len=18)
+        uniq = safe_id(p.peer_id)
+        mark_up = f"wg-{sid}-{uniq}-up"
+        mark_down = f"wg-{sid}-{uniq}-down"
+        mcomment_up = f"{p.comment or p.ip} | {p.peer_id} | wg-tui mangle up"
+        mcomment_down = f"{p.comment or p.ip} | {p.peer_id} | wg-tui mangle down"
+        qcomment_up = f"{p.comment or p.ip} | {p.peer_id} | wg-tui queue up"
+        qcomment_down = f"{p.comment or p.ip} | {p.peer_id} | wg-tui queue down"
+        qname_up = f"{sid}-{uniq}-up"
+        qname_down = f"{sid}-{uniq}-down"
         trusted_comment = f"{p.comment or p.ip} | {p.peer_id} | wg-tui trusted-only"
         ex_comment_up, ex_comment_down = self.exempt_rule_comments(p)
+        norm_down = int(st.get("speed_limit_down_bps", 0) or 0)
+        norm_up = int(st.get("speed_limit_up_bps", 0) or 0)
         return (
             f":local pid {ros_q(p.peer_id)};:local checkName {ros_q(check_name)};"
             f":local mode {ros_q(mode)};:local tComment {ros_q(trusted_comment)};"
+            f":local pip {ros_q(p.ip)};:local nD {norm_down};:local nU {norm_up};"
+            f":local markUp {ros_q(mark_up)};:local markDown {ros_q(mark_down)};"
+            f":local mcu {ros_q(mcomment_up)};:local mcd {ros_q(mcomment_down)};"
+            f":local qcu {ros_q(qcomment_up)};:local qcd {ros_q(qcomment_down)};"
+            f":local qnu {ros_q(qname_up)};:local qnd {ros_q(qname_down)};"
             f":local exList {ros_q(self.cfg_exempt_dst_list)};"
             f":local ecu {ros_q(ex_comment_up)};:local ecd {ros_q(ex_comment_down)};"
             ":local pf [/interface wireguard peers find where .id=$pid];"
             ":if ([:len $pf]=0) do={:error \"peer-missing\";};"
             ":local rx [:tonum [/interface wireguard peers get $pf rx]];"
             ":local tx [:tonum [/interface wireguard peers get $pf tx]];"
-            ":local pip [/interface wireguard peers get $pf allowed-address];"
-            ":set pip [:pick $pip 0 [:find $pip \"/\"]];"
             ":local exuRule [/ip firewall mangle find where comment=$ecu];"
             ":if ([:len $exuRule]=0) do={/ip firewall mangle add chain=forward action=passthrough src-address=$pip dst-address-list=$exList comment=$ecu;:set exuRule [/ip firewall mangle find where comment=$ecu];};"
             ":local exdRule [/ip firewall mangle find where comment=$ecd];"
@@ -3028,7 +3087,20 @@ class App:
             ":local db 0;"
             ":if ($p4!=nil) do={:set db [:tonum [:pick $c ($p4+4) ([:len $c]-1)]];};"
             ":if (($db=1) and ([/interface wireguard peers get $pf disabled]=true)) do={/interface wireguard peers set $pf disabled=no;};"
-            ":if ($mode=\"trusted_only\") do={/ip firewall filter remove [find where comment=$tComment];};"
+            ":if ($mode=\"trusted_only\") do={/ip firewall filter remove [find where comment=$tComment];} else={"
+            "  :local mu [/ip firewall mangle find where comment=$mcu];:local md [/ip firewall mangle find where comment=$mcd];"
+            "  :local qu [/queue tree find where comment=$qcu];:local qd [/queue tree find where comment=$qcd];"
+            "  :if ($nU<=0) do={:if ([:len $mu]>0) do={/ip firewall mangle remove $mu;};:if ([:len $qu]>0) do={/queue tree remove $qu;};} else={"
+            "    :if ([:len $mu]=0) do={/ip firewall mangle add chain=forward action=mark-packet src-address=$pip new-packet-mark=$markUp passthrough=no comment=$mcu;}"
+            "    else={/ip firewall mangle set $mu chain=forward action=mark-packet src-address=$pip new-packet-mark=$markUp passthrough=no comment=$mcu;};"
+            "    :if ([:len $qu]=0) do={/queue tree add name=$qnu parent=global packet-mark=$markUp max-limit=$nU comment=$qcu;}"
+            "    else={/queue tree set $qu name=$qnu parent=global packet-mark=$markUp max-limit=$nU comment=$qcu;};};"
+            "  :if ($nD<=0) do={:if ([:len $md]>0) do={/ip firewall mangle remove $md;};:if ([:len $qd]>0) do={/queue tree remove $qd;};} else={"
+            "    :if ([:len $md]=0) do={/ip firewall mangle add chain=forward action=mark-packet dst-address=$pip new-packet-mark=$markDown passthrough=no comment=$mcd;}"
+            "    else={/ip firewall mangle set $md chain=forward action=mark-packet dst-address=$pip new-packet-mark=$markDown passthrough=no comment=$mcd;};"
+            "    :if ([:len $qd]=0) do={/queue tree add name=$qnd parent=global packet-mark=$markDown max-limit=$nD comment=$qcd;}"
+            "    else={/queue tree set $qd name=$qnd parent=global packet-mark=$markDown max-limit=$nD comment=$qcd;};};"
+            "};"
             "/system scheduler set $sf comment=(\"brx=\".$rx.\";btx=\".$tx.\";bexu=\".$exu.\";bexd=\".$exd.\";ov=0;db=0;\");"
         )
 

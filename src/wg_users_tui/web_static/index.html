@@ -52,6 +52,7 @@
       overflow-x: hidden;
       transition: background .24s ease, color .24s ease;
     }
+    body[data-busy="true"] { cursor: progress; }
     .wrap { max-width: 1660px; margin: 0 auto; padding: 14px; }
     h1 { margin: 0; font-size: 34px; line-height: 1.1; letter-spacing: -.3px; color: var(--text); }
     .subtitle { color: var(--muted); font-size: 15px; margin-top: 6px; }
@@ -114,6 +115,11 @@
       font-size: 12px;
       color: var(--muted);
       background: color-mix(in srgb, var(--surface) 70%, transparent);
+    }
+    .pill.busy {
+      color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+      background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
     }
     .cards { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .card { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent); }
@@ -813,6 +819,13 @@
             <span class="spacer"></span>
             <span class="pill" id="pmCurrent">current: -</span>
           </div>
+          <div class="pm-field" style="margin-bottom:8px;">
+            <label for="pmDefaultProfile">Default Router</label>
+            <div class="row">
+              <select id="pmDefaultProfile"></select>
+              <button class="ghost" onclick="saveDefaultProfile()">Set</button>
+            </div>
+          </div>
           <div id="profileList" class="profile-list"></div>
         </div>
         <div>
@@ -924,12 +937,37 @@
     const addIfacePoolCache = new Map();
     let profileManagerRows = [];
     let profileManagerEditName = null;
+    let refreshInFlight = null;
+    let uiBusyCount = 0;
 
     function txt(v) { return (v === null || v === undefined || v === '') ? 'not set' : String(v); }
     function val(id) { return document.getElementById(id).value.trim(); }
     function numOrNull(id) { const v = val(id); return v === '' ? null : Number(v); }
     function num(id) { const v = val(id); return v === '' ? 0 : Number(v); }
     function byId(id) { return document.getElementById(id); }
+    function updateBusyControls() {
+      const busy = uiBusyCount > 0;
+      document.body.setAttribute('data-busy', busy ? 'true' : 'false');
+      document.querySelectorAll('button, select, input, textarea').forEach((el) => {
+        if (el.dataset.busyAllow === '1') return;
+        if (busy) {
+          if (!Object.prototype.hasOwnProperty.call(el.dataset, 'busyPrevDisabled')) {
+            el.dataset.busyPrevDisabled = el.disabled ? '1' : '0';
+          }
+          el.disabled = true;
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(el.dataset, 'busyPrevDisabled')) {
+          el.disabled = el.dataset.busyPrevDisabled === '1';
+          delete el.dataset.busyPrevDisabled;
+        }
+      });
+    }
+    function setUiBusy(active) {
+      if (active) uiBusyCount += 1;
+      else uiBusyCount = Math.max(0, uiBusyCount - 1);
+      updateBusyControls();
+    }
     function sanitizeSearchInput() {
       const el = byId('searchBox');
       if (!el) return;
@@ -1169,6 +1207,23 @@
       }
       return `${s}s`;
     }
+    function hDuration(sec) {
+      const s0 = Math.max(0, Math.round(Number(sec || 0)));
+      if (s0 <= 0) return '0s';
+      let s = s0;
+      const d = Math.floor(s / 86400);
+      s -= d * 86400;
+      const h = Math.floor(s / 3600);
+      s -= h * 3600;
+      const m = Math.floor(s / 60);
+      s -= m * 60;
+      const parts = [];
+      if (d > 0) parts.push(`${d}d`);
+      if (h > 0) parts.push(`${h}h`);
+      if (m > 0 && parts.length < 2) parts.push(`${m}m`);
+      if (s > 0 && parts.length < 2) parts.push(`${s}s`);
+      return parts.join(' ');
+    }
     function handshakeToSeconds(text) {
       const s = String(text || '').trim().toLowerCase();
       if (!s) return null;
@@ -1304,11 +1359,15 @@
       const upNow = Number(c.up_speed_bps || 0);
       const downCap = Number(c.speed_limit_down_bps || 0);
       const upCap = Number(c.speed_limit_up_bps || 0);
+      const resetElapsed = Number(c.traffic_reset_elapsed_seconds || 0);
+      const resetRemaining = Number(c.traffic_reset_remaining_seconds || 0);
+      const resetTotal = Number(c.traffic_period_seconds || 0);
       host.innerHTML = [
         actionGraphCard('Download Quota', downUsed, downLim, (v) => hBytes(v), (v) => hBytes(v)),
         actionGraphCard('Upload Quota', upUsed, upLim, (v) => hBytes(v), (v) => hBytes(v)),
         actionGraphCard('Download Speed', downNow, downCap, (v) => hBps(v), (v) => hBps(v)),
         actionGraphCard('Upload Speed', upNow, upCap, (v) => hBps(v), (v) => hBps(v)),
+        actionGraphCard('Traffic Reset Window', resetElapsed, resetTotal, (v) => hDuration(v), (v) => hDuration(v)),
       ].join('');
       wrap.style.display = '';
     }
@@ -1611,24 +1670,42 @@
     }
 
     async function api(path, options = {}) {
-      const resp = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options,
-      });
-      if (!resp.ok) {
-        let detail = resp.statusText;
-        try { detail = (await resp.json()).detail || detail; } catch (_) {}
-        throw new Error(detail);
+      const { timeoutMs = 10000, headers = {}, ...rest } = options;
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      let resp;
+      setUiBusy(true);
+      try {
+        resp = await fetch(path, {
+          headers: { 'Content-Type': 'application/json', ...headers },
+          signal: ctl.signal,
+          ...rest,
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        setUiBusy(false);
+        if (e && e.name === 'AbortError') throw new Error(`Request timeout for ${path}`);
+        throw e;
       }
-      const ct = resp.headers.get('content-type') || '';
-      if (ct.includes('application/json')) return resp.json();
-      return resp.blob();
+      clearTimeout(timer);
+      try {
+        if (!resp.ok) {
+          let detail = resp.statusText;
+          try { detail = (await resp.json()).detail || detail; } catch (_) {}
+          throw new Error(detail);
+        }
+        const ct = resp.headers.get('content-type') || '';
+        if (ct.includes('application/json')) return resp.json();
+        return resp.blob();
+      } finally {
+        setUiBusy(false);
+      }
     }
 
     function setStatus(msg, bad = false) {
       const el = byId('statusBar');
       el.textContent = `status: ${msg}`;
-      el.className = `pill ${bad ? 'bad' : 'meta'}`;
+      el.className = `pill ${bad ? 'bad' : (uiBusyCount > 0 ? 'busy' : 'meta')}`;
     }
 
     function setSort(key) {
@@ -1887,7 +1964,8 @@
       for (const p of data.profiles) {
         const o = document.createElement('option');
         o.value = p.name;
-        o.textContent = `${p.name} (${p.router_ip}) [${p.transport}]`;
+        const suffix = p.name === data.default ? ' default' : '';
+        o.textContent = `${p.name} (${p.router_ip}) [${p.transport}]${suffix}`;
         if (p.name === data.current) o.selected = true;
         sel.appendChild(o);
       }
@@ -1928,7 +2006,8 @@
       for (const p of profileManagerRows) {
         const row = document.createElement('div');
         row.className = `profile-item ${profileManagerEditName === p.name ? 'active' : ''}`;
-        row.textContent = `${p.name} (${txt(p.router_ip)}) [${txt(p.transport)}]`;
+        const defaultMark = p.is_default === 'true' ? ' default' : '';
+        row.textContent = `${p.name} (${txt(p.router_ip)}) [${txt(p.transport)}]${defaultMark}`;
         row.onclick = () => editProfile(p.name);
         box.appendChild(row);
       }
@@ -1958,6 +2037,17 @@
       try {
         const data = await api('/api/profiles');
         profileManagerRows = data.profiles || [];
+        const defaultSel = byId('pmDefaultProfile');
+        if (defaultSel) {
+          defaultSel.innerHTML = '';
+          for (const p of profileManagerRows) {
+            const o = document.createElement('option');
+            o.value = p.name;
+            o.textContent = p.name;
+            if (p.name === data.default) o.selected = true;
+            defaultSel.appendChild(o);
+          }
+        }
         renderProfileList(data.current || '');
         if (profileManagerEditName) {
           const found = profileManagerRows.find(x => x.name === profileManagerEditName);
@@ -1973,6 +2063,20 @@
     async function openProfileModal() {
       openModal('profileModal');
       await loadProfileManager();
+    }
+
+    async function saveDefaultProfile() {
+      try {
+        const name = byId('pmDefaultProfile')?.value || '';
+        if (!name) { setStatus('Select default router first', true); return; }
+        await api('/api/profiles/default', {
+          method: 'POST',
+          body: JSON.stringify({ name }),
+        });
+        setStatus(`default router saved: ${name}`);
+        await loadProfiles();
+        await loadProfileManager();
+      } catch (e) { setStatus(e.message, true); }
     }
 
     async function saveProfile() {
@@ -2025,9 +2129,22 @@
 
     async function selectProfile() {
       try {
-        await api('/api/profiles/select', { method: 'POST', body: JSON.stringify({ name: byId('profileSelect').value }) });
+        const selected = byId('profileSelect').value;
+        if (!selected) { setStatus('Select a router profile first', true); return; }
+        setStatus(`switching to profile: ${selected}`);
+        const previousRefresh = refreshInFlight;
+        const out = await api('/api/profiles/select', {
+          method: 'POST',
+          body: JSON.stringify({ name: selected }),
+          timeoutMs: 60000,
+        });
+        if (previousRefresh) {
+          try { await previousRefresh; } catch (_) {}
+        }
+        await loadProfiles();
         selectedPeerId = null;
-        await refreshAll();
+        await refreshAll(true, { forceNew: true });
+        setStatus(`switched to profile: ${out.current || selected}`);
       } catch (e) { setStatus(e.message, true); }
     }
 
@@ -2530,17 +2647,36 @@
       setStatus(`auto refresh every ${sec}s`);
     }
 
-    async function refreshAll(showStatus = true) {
-      try {
-        await api('/api/refresh', { method: 'POST' });
-        await Promise.all([
-          loadOverview(),
-          loadInterfaceStats(),
-          loadInterfaces(),
-          loadClients(),
-        ]);
-        if (showStatus) setStatus('refreshed');
-      } catch (e) { setStatus(e.message, true); }
+    async function refreshAll(showStatus = true, options = {}) {
+      const forceNew = Boolean(options.forceNew);
+      if (refreshInFlight && forceNew) {
+        try { await refreshInFlight; } catch (_) {}
+      } else if (refreshInFlight) {
+        if (showStatus) setStatus('refresh already in progress');
+        return refreshInFlight;
+      }
+      refreshInFlight = (async () => {
+        try {
+          if (showStatus) setStatus('refreshing...');
+          const out = await api('/api/refresh', { method: 'POST', timeoutMs: 60000 });
+          if (out && out.status === 'busy') {
+            if (showStatus) setStatus('refresh skipped: manager busy');
+            return;
+          }
+          await Promise.all([
+            loadOverview(),
+            loadInterfaceStats(),
+            loadInterfaces(),
+            loadClients(),
+          ]);
+          if (showStatus) setStatus('refreshed');
+        } catch (e) {
+          setStatus(e.message, true);
+        } finally {
+          refreshInFlight = null;
+        }
+      })();
+      return refreshInFlight;
     }
 
     (async () => {

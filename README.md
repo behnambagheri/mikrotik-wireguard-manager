@@ -73,6 +73,7 @@ Create `.env` with one or more router profiles:
 ```env
 Router1={ user=YOUR_USER, password=YOUR_PASSWORD, router_ip=172.16.40.1, endpoint_ip=YOUR_PUBLIC_IP, dns_servers=YOUR_DNS_SERVERS_COMMA_SEPARATED_OR_ROUTER_IP}
 Router2={ user=YOUR_USER, password=YOUR_PASSWORD, router_ip=192.168.10.1, endpoint_ip=YOUR_PUBLIC_IP, dns_servers=YOUR_DNS_SERVERS_COMMA_SEPARATED_OR_ROUTER_IP}
+DEFAULT_ROUTER_PROFILE=Router1
 ```
 
 Profile fields:
@@ -85,6 +86,8 @@ Profile fields:
 - `transport` (optional, `rest`, `api_ssl`, or `api`; default `rest`)
 - `use_https` (optional, `true|false`, default `false`)
 - `timeout_sec` (optional, default `30`)
+
+Set `DEFAULT_ROUTER_PROFILE` to the profile name that should be selected automatically when the TUI or web app starts. In the web UI, Manage Routers can update this value in `.env`.
 
 Use `transport=api_ssl` or `transport=api` for older RouterOS versions where `/rest` is unavailable (for example some 7.6 builds).
 

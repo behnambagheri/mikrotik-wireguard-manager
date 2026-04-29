@@ -14,6 +14,10 @@ class SelectProfileBody(BaseModel):
     name: str
 
 
+class DefaultProfileBody(BaseModel):
+    name: str
+
+
 class ProfileCreateBody(BaseModel):
     name: str
     user: str
@@ -103,7 +107,11 @@ def create_app() -> FastAPI:
 
     @app.get("/api/profiles")
     def profiles() -> Dict[str, Any]:
-        return {"current": manager.current_profile(), "profiles": manager.list_profiles()}
+        return {
+            "current": manager.current_profile(),
+            "default": manager.default_profile(),
+            "profiles": manager.list_profiles(),
+        }
 
     @app.get("/api/profiles/{name}")
     def profile_get(name: str) -> Dict[str, Any]:
@@ -157,12 +165,22 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    @app.post("/api/profiles/default")
+    def profiles_default(body: DefaultProfileBody) -> Dict[str, str]:
+        try:
+            out = manager.set_default_profile(body.name)
+            return {"status": "ok", "default": out["default"]}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     @app.post("/api/refresh")
     def refresh() -> Dict[str, str]:
         try:
             manager.refresh()
             return {"status": "ok"}
         except Exception as e:
+            if "Manager busy during refresh" in str(e):
+                return {"status": "busy"}
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @app.get("/api/overview")

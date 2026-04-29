@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import logging
+import logging.config
 import os
 import sys
 
@@ -31,11 +33,38 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         import uvicorn
+        from uvicorn.config import LOGGING_CONFIG
     except Exception as e:
         print(f"ERROR: uvicorn is required for web mode: {e}")
         return 1
 
-    uvicorn.run("wg_users_tui.web:app", host=args.host, port=args.port, reload=False)
+    log_config = {
+        **LOGGING_CONFIG,
+        "formatters": {
+            **LOGGING_CONFIG.get("formatters", {}),
+            "wg_default": {
+                "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            },
+        },
+        "handlers": {
+            **LOGGING_CONFIG.get("handlers", {}),
+            "wg_default": {
+                "class": "logging.StreamHandler",
+                "formatter": "wg_default",
+                "stream": "ext://sys.stderr",
+            },
+        },
+        "loggers": {
+            **LOGGING_CONFIG.get("loggers", {}),
+            "wg_users_tui": {
+                "handlers": ["wg_default"],
+                "level": "INFO",
+                "propagate": False,
+            },
+        },
+    }
+    logging.config.dictConfig(log_config)
+    uvicorn.run("wg_users_tui.web:app", host=args.host, port=args.port, reload=False, log_config=log_config)
     return 0
 
 

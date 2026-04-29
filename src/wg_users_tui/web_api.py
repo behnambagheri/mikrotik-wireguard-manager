@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import ipaddress
 import json
+import logging
 import os
 import re
 import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,11 +19,14 @@ from .app import (
     bytes_h,
     env_file_path,
     gb_to_bytes,
+    get_default_profile_name,
     mbps_to_bps,
     parse_router_profiles,
     parse_period_input,
     slug,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _DummyScreen:
@@ -61,7 +67,7 @@ class WebManager:
     def _bootstrap_non_interactive(self) -> None:
         # Web mode must never invoke curses dialogs.
         if self.engine.profiles:
-            preferred = os.environ.get("WG_WEB_DEFAULT_PROFILE", "").strip()
+            preferred = get_default_profile_name(self._profiles_env_path())
             if preferred and preferred in self.engine.profiles:
                 name = preferred
             else:
@@ -90,6 +96,49 @@ class WebManager:
 
     def current_profile(self) -> str:
         return self.engine.profile_name
+
+    @staticmethod
+    def _fmt_fields(**fields: Any) -> str:
+        parts: List[str] = []
+        for key, value in fields.items():
+            if value is None or value == "":
+                continue
+            parts.append(f"{key}={value}")
+        return " ".join(parts)
+
+    @contextmanager
+    def _operation(self, action: str, **fields: Any):
+        profile = self.engine.profile_name or "unknown"
+        start = time.monotonic()
+        suffix = self._fmt_fields(profile=profile, **fields)
+        msg = f"{action} started"
+        if suffix:
+            msg = f"{msg} | {suffix}"
+        logger.info(msg)
+        try:
+            yield
+        except Exception:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            fail = f"{action} failed"
+            if suffix:
+                fail = f"{fail} | {suffix}"
+            logger.exception("%s duration_ms=%s", fail, elapsed_ms)
+            raise
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        done = f"{action} finished"
+        if suffix:
+            done = f"{done} | {suffix}"
+        logger.info("%s duration_ms=%s", done, elapsed_ms)
+
+    @contextmanager
+    def _busy_lock(self, action: str, timeout_sec: float = 0.25):
+        acquired = self._lock.acquire(timeout=timeout_sec)
+        if not acquired:
+            raise RuntimeError(f"Manager busy during {action}; try again")
+        try:
+            yield
+        finally:
+            self._lock.release()
 
     @staticmethod
     def _validate_profile_name(name: str) -> str:
@@ -163,6 +212,38 @@ class WebManager:
     def _profiles_env_path(self) -> str:
         return env_file_path()
 
+    def _default_profile_name(self) -> str:
+        return get_default_profile_name(self._profiles_env_path())
+
+    def _save_default_profile_to_env(self, name: str) -> None:
+        path = self._profiles_env_path()
+        lines: List[str] = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+        written = False
+        keep: List[str] = []
+        for raw in lines:
+            line = raw.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _value = line.split("=", 1)
+                if key.strip() in ("DEFAULT_ROUTER_PROFILE", "WG_DEFAULT_PROFILE", "WG_WEB_DEFAULT_PROFILE"):
+                    if not written:
+                        keep.append(f"DEFAULT_ROUTER_PROFILE={name}\n")
+                        written = True
+                    continue
+            keep.append(raw)
+
+        if not written:
+            if keep and keep[-1].strip() != "":
+                keep.append("\n")
+            keep.append(f"DEFAULT_ROUTER_PROFILE={name}\n")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(keep)
+        os.environ["DEFAULT_ROUTER_PROFILE"] = name
+
     def _save_profiles_to_env(self, profiles: Dict[str, Dict[str, str]]) -> None:
         path = self._profiles_env_path()
         lines: List[str] = []
@@ -207,6 +288,7 @@ class WebManager:
 
     def list_profiles(self) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
+        default_name = self._default_profile_name()
         for name in sorted(self.engine.profiles.keys()):
             p = self.engine.profiles[name]
             rows.append(
@@ -215,9 +297,22 @@ class WebManager:
                     "router_ip": p.get("router_ip", ""),
                     "transport": p.get("transport", "rest"),
                     "endpoint_ip": p.get("endpoint_ip", ""),
+                    "is_default": "true" if name == default_name else "false",
                 }
             )
         return rows
+
+    def default_profile(self) -> str:
+        return self._default_profile_name()
+
+    def set_default_profile(self, name: str) -> Dict[str, str]:
+        with self._operation("profile default update", name=name):
+            with self._lock:
+                n = self._validate_profile_name(name)
+                if n not in self.engine.profiles:
+                    raise RuntimeError(f"Profile not found: {n}")
+                self._save_default_profile_to_env(n)
+                return {"default": n}
 
     def get_profile(self, name: str) -> Dict[str, str]:
         with self._lock:
@@ -239,68 +334,77 @@ class WebManager:
             }
 
     def create_profile(self, name: str, payload: Dict[str, Any]) -> None:
-        with self._lock:
-            n = self._validate_profile_name(name)
-            if n in self.engine.profiles:
-                raise RuntimeError(f"Profile already exists: {n}")
-            patch = self._clean_profile_patch(payload)
-            if not patch.get("router_ip") or not patch.get("user") or not patch.get("password"):
-                raise RuntimeError("router_ip, user, and password are required")
-            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
-            profiles[n] = patch
-            self._save_profiles_to_env(profiles)
-            prefer = self.engine.profile_name if self.engine.profile_name in profiles else n
-            self._reload_profiles(prefer_name=prefer)
+        with self._operation("profile create", name=name):
+            with self._lock:
+                n = self._validate_profile_name(name)
+                if n in self.engine.profiles:
+                    raise RuntimeError(f"Profile already exists: {n}")
+                patch = self._clean_profile_patch(payload)
+                if not patch.get("router_ip") or not patch.get("user") or not patch.get("password"):
+                    raise RuntimeError("router_ip, user, and password are required")
+                profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+                profiles[n] = patch
+                self._save_profiles_to_env(profiles)
+                prefer = self.engine.profile_name if self.engine.profile_name in profiles else n
+                self._reload_profiles(prefer_name=prefer)
 
     def update_profile(self, name: str, payload: Dict[str, Any], new_name: Optional[str] = None) -> Dict[str, str]:
-        with self._lock:
-            n = self._validate_profile_name(name)
-            if n not in self.engine.profiles:
-                raise RuntimeError(f"Profile not found: {n}")
-            final_name = self._validate_profile_name(new_name) if new_name else n
-            if final_name != n and final_name in self.engine.profiles:
-                raise RuntimeError(f"Profile already exists: {final_name}")
-            patch = self._clean_profile_patch(payload)
-            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
-            cur = dict(profiles.pop(n))
-            cur.update(patch)
-            if not cur.get("router_ip") or not cur.get("user") or not cur.get("password"):
-                raise RuntimeError("router_ip, user, and password are required")
-            profiles[final_name] = cur
-            self._save_profiles_to_env(profiles)
-            current_before = self.engine.profile_name
-            prefer = final_name if current_before == n else current_before
-            if prefer not in profiles:
-                prefer = final_name
-            self._reload_profiles(prefer_name=prefer)
-            return {"name": final_name}
+        with self._operation("profile update", name=name, new_name=new_name):
+            with self._lock:
+                n = self._validate_profile_name(name)
+                if n not in self.engine.profiles:
+                    raise RuntimeError(f"Profile not found: {n}")
+                final_name = self._validate_profile_name(new_name) if new_name else n
+                if final_name != n and final_name in self.engine.profiles:
+                    raise RuntimeError(f"Profile already exists: {final_name}")
+                patch = self._clean_profile_patch(payload)
+                profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+                cur = dict(profiles.pop(n))
+                cur.update(patch)
+                if not cur.get("router_ip") or not cur.get("user") or not cur.get("password"):
+                    raise RuntimeError("router_ip, user, and password are required")
+                profiles[final_name] = cur
+                self._save_profiles_to_env(profiles)
+                if self._default_profile_name() == n:
+                    self._save_default_profile_to_env(final_name)
+                current_before = self.engine.profile_name
+                prefer = final_name if current_before == n else current_before
+                if prefer not in profiles:
+                    prefer = final_name
+                self._reload_profiles(prefer_name=prefer)
+                return {"name": final_name}
 
     def delete_profile(self, name: str) -> Dict[str, str]:
-        with self._lock:
-            n = self._validate_profile_name(name)
-            if n not in self.engine.profiles:
-                raise RuntimeError(f"Profile not found: {n}")
-            if len(self.engine.profiles) <= 1:
-                raise RuntimeError("Cannot delete the last profile")
-            profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
-            del profiles[n]
-            current = self.engine.profile_name
-            next_name = current if current in profiles else sorted(profiles.keys())[0]
-            self._save_profiles_to_env(profiles)
-            self._reload_profiles(prefer_name=next_name)
-            return {"current": self.engine.profile_name}
+        with self._operation("profile delete", name=name):
+            with self._lock:
+                n = self._validate_profile_name(name)
+                if n not in self.engine.profiles:
+                    raise RuntimeError(f"Profile not found: {n}")
+                if len(self.engine.profiles) <= 1:
+                    raise RuntimeError("Cannot delete the last profile")
+                profiles = {k: dict(v) for k, v in self.engine.profiles.items()}
+                del profiles[n]
+                current = self.engine.profile_name
+                next_name = current if current in profiles else sorted(profiles.keys())[0]
+                self._save_profiles_to_env(profiles)
+                if self._default_profile_name() == n:
+                    self._save_default_profile_to_env(next_name)
+                self._reload_profiles(prefer_name=next_name)
+                return {"current": self.engine.profile_name}
 
     def select_profile(self, name: str) -> None:
-        with self._lock:
-            if name not in self.engine.profiles:
-                raise RuntimeError(f"Profile not found: {name}")
-            self.engine.connect_profile(name, self.engine.profiles[name])
-            self.engine.reset_runtime_caches()
-            self.engine.refresh_data(force=True)
+        with self._operation("profile switch", name=name):
+            with self._busy_lock("profile switch"):
+                if name not in self.engine.profiles:
+                    raise RuntimeError(f"Profile not found: {name}")
+                self.engine.connect_profile(name, self.engine.profiles[name])
+                self.engine.reset_runtime_caches()
+                self.engine.refresh_data(force=True)
 
     def refresh(self) -> None:
-        with self._lock:
-            self.engine.refresh_data(force=True)
+        with self._operation("refresh"):
+            with self._busy_lock("refresh"):
+                self.engine.refresh_data(force=True)
 
     def _peer_by_id(self, peer_id: str):
         for p in self.engine.peers:
@@ -449,9 +553,16 @@ class WebManager:
 
     def build_clients_payload(self) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
+        now = int(time.time())
         for p in self.engine.peers:
             st = self.engine.state.peer(p.peer_id)
             down_used, up_used = self.engine.peer_used_bytes(p, st)
+            period_seconds = int(st.get("traffic_period_seconds", 0) or 0)
+            baseline_at = int(st.get("baseline_at", 0) or 0)
+            baseline_age_seconds = max(0, now - baseline_at) if baseline_at > 0 else 0
+            traffic_reset_elapsed_seconds = min(period_seconds, baseline_age_seconds) if period_seconds > 0 else 0
+            traffic_reset_remaining_seconds = max(0, period_seconds - baseline_age_seconds) if period_seconds > 0 else 0
+            traffic_reset_progress_pct = ((traffic_reset_elapsed_seconds / period_seconds) * 100.0) if period_seconds > 0 else 0.0
             out.append(
                 {
                     "peer_id": p.peer_id,
@@ -473,7 +584,12 @@ class WebManager:
                     "up_speed": bps_h(p.up_speed_bps),
                     "traffic_limit_down_bytes": int(st.get("traffic_limit_down_bytes", 0) or 0),
                     "traffic_limit_up_bytes": int(st.get("traffic_limit_up_bytes", 0) or 0),
-                    "traffic_period_seconds": int(st.get("traffic_period_seconds", 0) or 0),
+                    "traffic_period_seconds": period_seconds,
+                    "baseline_at": baseline_at,
+                    "baseline_age_seconds": baseline_age_seconds,
+                    "traffic_reset_elapsed_seconds": traffic_reset_elapsed_seconds,
+                    "traffic_reset_remaining_seconds": traffic_reset_remaining_seconds,
+                    "traffic_reset_progress_pct": traffic_reset_progress_pct,
                     "overlimit_mode": str(st.get("overlimit_mode", "disable") or "disable"),
                     "overlimit_speed_down_bps": int(st.get("overlimit_speed_down_bps", 0) or 0),
                     "overlimit_speed_up_bps": int(st.get("overlimit_speed_up_bps", 0) or 0),
@@ -499,146 +615,156 @@ class WebManager:
             raise RuntimeError(f"Peer not found: {peer_id}")
 
     def set_enabled(self, peer_id: str, enabled: bool) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            self.engine.set_enable(p, enabled)
-            self.engine.state.save()
+        with self._operation("client set enabled", peer_id=peer_id, enabled=enabled):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
+                self.engine.set_enable(p, enabled)
+                self.engine.state.save()
 
     def batch_set_enabled(self, peer_ids: List[str], enabled: bool) -> Dict[str, Any]:
-        with self._lock:
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id for p in self.engine.peers}
-            updated: List[str] = []
-            skipped: List[str] = []
-            for pid in req:
-                if pid not in existing:
-                    skipped.append(pid)
-                    continue
-                p = self._peer_by_id(pid)
-                self.engine.set_enable(p, enabled)
-                updated.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"updated": updated, "skipped": skipped, "requested": len(req), "enabled": enabled}
+        with self._operation("batch set enabled", count=len(peer_ids), enabled=enabled):
+            with self._lock:
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id for p in self.engine.peers}
+                updated: List[str] = []
+                skipped: List[str] = []
+                for pid in req:
+                    if pid not in existing:
+                        skipped.append(pid)
+                        continue
+                    p = self._peer_by_id(pid)
+                    self.engine.set_enable(p, enabled)
+                    updated.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"updated": updated, "skipped": skipped, "requested": len(req), "enabled": enabled}
 
     def delete_client(self, peer_id: str) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            if self.engine.client is None:
-                raise RuntimeError("Router client is not initialized")
-            self.engine.client.delete_peer(p.peer_id)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
+        with self._operation("client delete", peer_id=peer_id):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
+                if self.engine.client is None:
+                    raise RuntimeError("Router client is not initialized")
+                self.engine.client.delete_peer(p.peer_id)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
 
     def batch_delete_clients(self, peer_ids: List[str]) -> Dict[str, Any]:
-        with self._lock:
-            if self.engine.client is None:
-                raise RuntimeError("Router client is not initialized")
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id for p in self.engine.peers}
-            deleted: List[str] = []
-            skipped: List[str] = []
-            for pid in req:
-                if pid not in existing:
-                    skipped.append(pid)
-                    continue
-                self.engine.client.delete_peer(pid)
-                deleted.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"deleted": deleted, "skipped": skipped, "requested": len(req)}
+        with self._operation("batch client delete", count=len(peer_ids)):
+            with self._lock:
+                if self.engine.client is None:
+                    raise RuntimeError("Router client is not initialized")
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id for p in self.engine.peers}
+                deleted: List[str] = []
+                skipped: List[str] = []
+                for pid in req:
+                    if pid not in existing:
+                        skipped.append(pid)
+                        continue
+                    self.engine.client.delete_peer(pid)
+                    deleted.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"deleted": deleted, "skipped": skipped, "requested": len(req)}
 
     def reset_usage(self, peer_id: str) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            self.engine.reset_usage(p)
-            self.engine.state.save()
+        with self._operation("client reset usage", peer_id=peer_id):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
+                self.engine.reset_usage(p)
+                self.engine.state.save()
 
     def batch_reset_usage(self, peer_ids: List[str]) -> Dict[str, Any]:
-        with self._lock:
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id: p for p in self.engine.peers}
-            updated: List[str] = []
-            skipped: List[str] = []
-            for pid in req:
-                p = existing.get(pid)
-                if p is None:
-                    skipped.append(pid)
-                    continue
-                self.engine.reset_usage(p)
-                updated.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"updated": updated, "skipped": skipped, "requested": len(req)}
+        with self._operation("batch reset usage", count=len(peer_ids)):
+            with self._lock:
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id: p for p in self.engine.peers}
+                updated: List[str] = []
+                skipped: List[str] = []
+                for pid in req:
+                    p = existing.get(pid)
+                    if p is None:
+                        skipped.append(pid)
+                        continue
+                    self.engine.reset_usage(p)
+                    updated.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"updated": updated, "skipped": skipped, "requested": len(req)}
 
     def clear_limits(self, peer_id: str) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            self.engine.clear_limits(p)
-            self.engine.state.save()
+        with self._operation("client clear limits", peer_id=peer_id):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
+                self.engine.clear_limits(p)
+                self.engine.state.save()
 
     def batch_clear_limits(self, peer_ids: List[str]) -> Dict[str, Any]:
-        with self._lock:
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id: p for p in self.engine.peers}
-            updated: List[str] = []
-            skipped: List[str] = []
-            for pid in req:
-                p = existing.get(pid)
-                if p is None:
-                    skipped.append(pid)
-                    continue
-                self.engine.clear_limits(p)
-                updated.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"updated": updated, "skipped": skipped, "requested": len(req)}
+        with self._operation("batch clear limits", count=len(peer_ids)):
+            with self._lock:
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id: p for p in self.engine.peers}
+                updated: List[str] = []
+                skipped: List[str] = []
+                for pid in req:
+                    p = existing.get(pid)
+                    if p is None:
+                        skipped.append(pid)
+                        continue
+                    self.engine.clear_limits(p)
+                    updated.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"updated": updated, "skipped": skipped, "requested": len(req)}
 
     def set_speed_limits(self, peer_id: str, down_mbps: float, up_mbps: float) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            st = self.engine.state.peer(p.peer_id)
-            down_bps = mbps_to_bps(down_mbps) if down_mbps > 0 else 0
-            up_bps = mbps_to_bps(up_mbps) if up_mbps > 0 else 0
-            self.engine.apply_speed_rules(p, down_bps=down_bps, up_bps=up_bps)
-            st["speed_limit_down_bps"] = down_bps
-            st["speed_limit_up_bps"] = up_bps
-            self.engine.install_remote_policy(p, st)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-
-    def batch_set_speed_limits(self, peer_ids: List[str], down_mbps: float, up_mbps: float) -> Dict[str, Any]:
-        with self._lock:
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id: p for p in self.engine.peers}
-            updated: List[str] = []
-            skipped: List[str] = []
-            down_bps = mbps_to_bps(down_mbps) if down_mbps > 0 else 0
-            up_bps = mbps_to_bps(up_mbps) if up_mbps > 0 else 0
-            for pid in req:
-                p = existing.get(pid)
-                if p is None:
-                    skipped.append(pid)
-                    continue
+        with self._operation("client set speed", peer_id=peer_id, down_mbps=down_mbps, up_mbps=up_mbps):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
                 st = self.engine.state.peer(p.peer_id)
+                down_bps = mbps_to_bps(down_mbps) if down_mbps > 0 else 0
+                up_bps = mbps_to_bps(up_mbps) if up_mbps > 0 else 0
                 self.engine.apply_speed_rules(p, down_bps=down_bps, up_bps=up_bps)
                 st["speed_limit_down_bps"] = down_bps
                 st["speed_limit_up_bps"] = up_bps
                 self.engine.install_remote_policy(p, st)
-                updated.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"updated": updated, "skipped": skipped, "requested": len(req)}
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+
+    def batch_set_speed_limits(self, peer_ids: List[str], down_mbps: float, up_mbps: float) -> Dict[str, Any]:
+        with self._operation("batch set speed", count=len(peer_ids), down_mbps=down_mbps, up_mbps=up_mbps):
+            with self._lock:
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id: p for p in self.engine.peers}
+                updated: List[str] = []
+                skipped: List[str] = []
+                down_bps = mbps_to_bps(down_mbps) if down_mbps > 0 else 0
+                up_bps = mbps_to_bps(up_mbps) if up_mbps > 0 else 0
+                for pid in req:
+                    p = existing.get(pid)
+                    if p is None:
+                        skipped.append(pid)
+                        continue
+                    st = self.engine.state.peer(p.peer_id)
+                    self.engine.apply_speed_rules(p, down_bps=down_bps, up_bps=up_bps)
+                    st["speed_limit_down_bps"] = down_bps
+                    st["speed_limit_up_bps"] = up_bps
+                    self.engine.install_remote_policy(p, st)
+                    updated.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"updated": updated, "skipped": skipped, "requested": len(req)}
 
     def set_traffic_policy(
         self,
@@ -650,59 +776,25 @@ class WebManager:
         over_down_mbps: float,
         over_up_mbps: float,
     ) -> None:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            st = self.engine.state.peer(p.peer_id)
-            period_s = parse_period_input(period) if period.strip() else 0
-            mode_value = (mode or "disable").strip().lower()
-            if mode_value in ("trusted", "trusted-only", "trustedonly"):
-                mode_value = "trusted_only"
-            if mode_value not in ("disable", "throttle", "trusted_only"):
-                raise ValueError("mode must be disable, throttle, or trusted_only")
-            st["traffic_limit_down_bytes"] = gb_to_bytes(down_gb) if down_gb > 0 else 0
-            st["traffic_limit_up_bytes"] = gb_to_bytes(up_gb) if up_gb > 0 else 0
-            st["traffic_period_seconds"] = period_s
-            st["overlimit_mode"] = mode_value
-            st["overlimit_speed_down_bps"] = mbps_to_bps(over_down_mbps) if over_down_mbps > 0 else 0
-            st["overlimit_speed_up_bps"] = mbps_to_bps(over_up_mbps) if over_up_mbps > 0 else 0
-            st["overlimit_active"] = False
-            st["disabled_by_policy"] = False
-            self.engine.apply_trusted_only_rule(p, enabled=False)
-            self.engine.reset_usage(p)
-            self.engine.install_remote_policy(p, st)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-
-    def batch_set_traffic_policy(
-        self,
-        peer_ids: List[str],
-        down_gb: float,
-        up_gb: float,
-        period: str,
-        mode: str,
-        over_down_mbps: float,
-        over_up_mbps: float,
-    ) -> Dict[str, Any]:
-        with self._lock:
-            req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
-            if not req:
-                raise RuntimeError("No peer ids provided")
-            existing = {p.peer_id: p for p in self.engine.peers}
-            period_s = parse_period_input(period) if period.strip() else 0
-            mode_value = (mode or "disable").strip().lower()
-            if mode_value in ("trusted", "trusted-only", "trustedonly"):
-                mode_value = "trusted_only"
-            if mode_value not in ("disable", "throttle", "trusted_only"):
-                raise ValueError("mode must be disable, throttle, or trusted_only")
-
-            updated: List[str] = []
-            skipped: List[str] = []
-            for pid in req:
-                p = existing.get(pid)
-                if p is None:
-                    skipped.append(pid)
-                    continue
+        with self._operation(
+            "client set policy",
+            peer_id=peer_id,
+            down_gb=down_gb,
+            up_gb=up_gb,
+            period=period,
+            mode=mode,
+            over_down_mbps=over_down_mbps,
+            over_up_mbps=over_up_mbps,
+        ):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
                 st = self.engine.state.peer(p.peer_id)
+                period_s = parse_period_input(period) if period.strip() else 0
+                mode_value = (mode or "disable").strip().lower()
+                if mode_value in ("trusted", "trusted-only", "trustedonly"):
+                    mode_value = "trusted_only"
+                if mode_value not in ("disable", "throttle", "trusted_only"):
+                    raise ValueError("mode must be disable, throttle, or trusted_only")
                 st["traffic_limit_down_bytes"] = gb_to_bytes(down_gb) if down_gb > 0 else 0
                 st["traffic_limit_up_bytes"] = gb_to_bytes(up_gb) if up_gb > 0 else 0
                 st["traffic_period_seconds"] = period_s
@@ -714,173 +806,233 @@ class WebManager:
                 self.engine.apply_trusted_only_rule(p, enabled=False)
                 self.engine.reset_usage(p)
                 self.engine.install_remote_policy(p, st)
-                updated.append(pid)
-            self.engine.state.save()
-            self.engine.refresh_data(force=True)
-            return {"updated": updated, "skipped": skipped, "requested": len(req)}
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+
+    def batch_set_traffic_policy(
+        self,
+        peer_ids: List[str],
+        down_gb: float,
+        up_gb: float,
+        period: str,
+        mode: str,
+        over_down_mbps: float,
+        over_up_mbps: float,
+    ) -> Dict[str, Any]:
+        with self._operation(
+            "batch set policy",
+            count=len(peer_ids),
+            down_gb=down_gb,
+            up_gb=up_gb,
+            period=period,
+            mode=mode,
+            over_down_mbps=over_down_mbps,
+            over_up_mbps=over_up_mbps,
+        ):
+            with self._lock:
+                req = [str(x or "").strip() for x in peer_ids if str(x or "").strip()]
+                if not req:
+                    raise RuntimeError("No peer ids provided")
+                existing = {p.peer_id: p for p in self.engine.peers}
+                period_s = parse_period_input(period) if period.strip() else 0
+                mode_value = (mode or "disable").strip().lower()
+                if mode_value in ("trusted", "trusted-only", "trustedonly"):
+                    mode_value = "trusted_only"
+                if mode_value not in ("disable", "throttle", "trusted_only"):
+                    raise ValueError("mode must be disable, throttle, or trusted_only")
+
+                updated: List[str] = []
+                skipped: List[str] = []
+                for pid in req:
+                    p = existing.get(pid)
+                    if p is None:
+                        skipped.append(pid)
+                        continue
+                    st = self.engine.state.peer(p.peer_id)
+                    st["traffic_limit_down_bytes"] = gb_to_bytes(down_gb) if down_gb > 0 else 0
+                    st["traffic_limit_up_bytes"] = gb_to_bytes(up_gb) if up_gb > 0 else 0
+                    st["traffic_period_seconds"] = period_s
+                    st["overlimit_mode"] = mode_value
+                    st["overlimit_speed_down_bps"] = mbps_to_bps(over_down_mbps) if over_down_mbps > 0 else 0
+                    st["overlimit_speed_up_bps"] = mbps_to_bps(over_up_mbps) if over_up_mbps > 0 else 0
+                    st["overlimit_active"] = False
+                    st["disabled_by_policy"] = False
+                    self.engine.apply_trusted_only_rule(p, enabled=False)
+                    self.engine.reset_usage(p)
+                    self.engine.install_remote_policy(p, st)
+                    updated.append(pid)
+                self.engine.state.save()
+                self.engine.refresh_data(force=True)
+                return {"updated": updated, "skipped": skipped, "requested": len(req)}
 
     def revoke_client(self, peer_id: str) -> Dict[str, str]:
-        with self._lock:
-            p = self._peer_by_id(peer_id)
-            priv, pub = self.engine.generate_client_keypair()
-            if self.engine.client is None:
-                raise RuntimeError("Router client is not initialized")
-            self.engine.client.update_peer_public_key(p.peer_id, pub)
-            self.engine.refresh_data(force=True)
+        with self._operation("client revoke", peer_id=peer_id):
+            with self._lock:
+                p = self._peer_by_id(peer_id)
+                priv, pub = self.engine.generate_client_keypair()
+                if self.engine.client is None:
+                    raise RuntimeError("Router client is not initialized")
+                self.engine.client.update_peer_public_key(p.peer_id, pub)
+                self.engine.refresh_data(force=True)
 
-            server_pub = ""
-            listen_port = "13231"
-            ifaces = self.engine.client.list_wireguard_interfaces()
-            for iface in ifaces:
-                if str(iface.get("name", "")) == p.interface:
-                    server_pub = str(iface.get("public-key", "")).strip()
-                    listen_port = str(iface.get("listen-port", "13231"))
-                    break
-            if not server_pub:
-                server_pub = "REPLACE_WITH_SERVER_PUBLIC_KEY"
+                server_pub = ""
+                listen_port = "13231"
+                ifaces = self.engine.client.list_wireguard_interfaces()
+                for iface in ifaces:
+                    if str(iface.get("name", "")) == p.interface:
+                        server_pub = str(iface.get("public-key", "")).strip()
+                        listen_port = str(iface.get("listen-port", "13231"))
+                        break
+                if not server_pub:
+                    server_pub = "REPLACE_WITH_SERVER_PUBLIC_KEY"
 
-            conf = [
-                "[Interface]",
-                f"PrivateKey = {priv}",
-                f"Address = {p.ip}/32",
-                f"DNS = {self.engine.cfg_dns}",
-                "",
-                "[Peer]",
-                f"PublicKey = {server_pub}",
-                f"AllowedIPs = {CFG_ALLOWED_IPS}",
-                f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
-                f"PersistentKeepalive = {CFG_KEEPALIVE}",
-            ]
-            filename = f"{slug((p.comment or p.ip) + '-revoked', max_len=40)}.conf"
-            return {"config": "\n".join(conf), "filename": filename}
+                conf = [
+                    "[Interface]",
+                    f"PrivateKey = {priv}",
+                    f"Address = {p.ip}/32",
+                    f"DNS = {self.engine.cfg_dns}",
+                    "",
+                    "[Peer]",
+                    f"PublicKey = {server_pub}",
+                    f"AllowedIPs = {CFG_ALLOWED_IPS}",
+                    f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
+                    f"PersistentKeepalive = {CFG_KEEPALIVE}",
+                ]
+                filename = f"{slug((p.comment or p.ip) + '-revoked', max_len=40)}.conf"
+                return {"config": "\n".join(conf), "filename": filename}
 
     def add_client(self, req: AddClientRequest) -> Dict[str, str]:
-        with self._lock:
-            if self.engine.client is None:
-                raise RuntimeError("Router client is not initialized")
-            if req.comment and not re.fullmatch(r"[A-Za-z0-9 -]{1,32}", req.comment.strip()):
-                raise RuntimeError("Comment must be English letters/digits/space/- and max 32 chars")
-            ifaces = self.engine.client.list_wireguard_interfaces()
-            iface = None
-            for i in ifaces:
-                if str(i.get("name", "")) == req.interface:
-                    iface = i
-                    break
-            if iface is None:
-                raise RuntimeError(f"Interface not found: {req.interface}")
+        with self._operation("client add", interface=req.interface, ip=req.ip, comment=req.comment.strip()):
+            with self._lock:
+                if self.engine.client is None:
+                    raise RuntimeError("Router client is not initialized")
+                if req.comment and not re.fullmatch(r"[A-Za-z0-9 -]{1,32}", req.comment.strip()):
+                    raise RuntimeError("Comment must be English letters/digits/space/- and max 32 chars")
+                ifaces = self.engine.client.list_wireguard_interfaces()
+                iface = None
+                for i in ifaces:
+                    if str(i.get("name", "")) == req.interface:
+                        iface = i
+                        break
+                if iface is None:
+                    raise RuntimeError(f"Interface not found: {req.interface}")
+                iface_name = str(iface.get("name", "wireguard"))
+                listen_port = str(iface.get("listen-port", "13231"))
+                server_pub = str(iface.get("public-key", "")).strip()
 
-            iface_name = str(iface.get("name", "wireguard"))
-            listen_port = str(iface.get("listen-port", "13231"))
-            server_pub = str(iface.get("public-key", "")).strip()
+                ip_rows = self.engine.client.list_ip_addresses()
+                peers = self.engine.client.list_peers()
+                local_cidr = ""
+                iface_ip = None
+                for r in ip_rows:
+                    if str(r.get("interface", "")) == iface_name:
+                        local_cidr = str(r.get("address", ""))
+                        try:
+                            iface_ip = ipaddress.ip_interface(local_cidr).ip
+                        except Exception:
+                            iface_ip = None
+                        break
+                if not local_cidr:
+                    raise RuntimeError(f"No IP address found on interface {iface_name}")
+                network = ipaddress.ip_interface(local_cidr).network
+                ip_obj = ipaddress.ip_address(req.ip)
+                if ip_obj not in network:
+                    raise RuntimeError(f"IP {ip_obj} is not in {network}")
+                if iface_ip is not None and ip_obj == iface_ip:
+                    raise RuntimeError(f"IP {ip_obj} is interface IP and cannot be assigned to peer")
+                for p in peers:
+                    if p.interface == iface_name and p.ip == str(ip_obj):
+                        raise RuntimeError(f"IP {ip_obj} is already used")
 
-            ip_rows = self.engine.client.list_ip_addresses()
-            peers = self.engine.client.list_peers()
-            local_cidr = ""
-            iface_ip = None
-            for r in ip_rows:
-                if str(r.get("interface", "")) == iface_name:
-                    local_cidr = str(r.get("address", ""))
-                    try:
-                        iface_ip = ipaddress.ip_interface(local_cidr).ip
-                    except Exception:
-                        iface_ip = None
-                    break
-            if not local_cidr:
-                raise RuntimeError(f"No IP address found on interface {iface_name}")
-            network = ipaddress.ip_interface(local_cidr).network
-            ip_obj = ipaddress.ip_address(req.ip)
-            if ip_obj not in network:
-                raise RuntimeError(f"IP {ip_obj} is not in {network}")
-            if iface_ip is not None and ip_obj == iface_ip:
-                raise RuntimeError(f"IP {ip_obj} is interface IP and cannot be assigned to peer")
-            for p in peers:
-                if p.interface == iface_name and p.ip == str(ip_obj):
-                    raise RuntimeError(f"IP {ip_obj} is already used")
+                priv, pub = self.engine.generate_client_keypair()
+                payload = {
+                    "interface": iface_name,
+                    "allowed-address": f"{ip_obj}/32",
+                    "public-key": pub,
+                    "disabled": "false",
+                }
+                if req.comment.strip():
+                    payload["comment"] = req.comment.strip()
+                self.engine.client.create_peer(payload)
+                self.engine.refresh_data(force=True)
 
-            priv, pub = self.engine.generate_client_keypair()
-            payload = {
-                "interface": iface_name,
-                "allowed-address": f"{ip_obj}/32",
-                "public-key": pub,
-                "disabled": "false",
-            }
-            if req.comment.strip():
-                payload["comment"] = req.comment.strip()
-            self.engine.client.create_peer(payload)
-            self.engine.refresh_data(force=True)
+                created = next((x for x in self.engine.peers if x.interface == iface_name and x.ip == str(ip_obj)), None)
+                if created is None:
+                    raise RuntimeError("Peer created but not found in refreshed list")
 
-            created = next((x for x in self.engine.peers if x.interface == iface_name and x.ip == str(ip_obj)), None)
-            if created is None:
-                raise RuntimeError("Peer created but not found in refreshed list")
+                if req.speed_down_mbps is not None or req.speed_up_mbps is not None:
+                    self.set_speed_limits(
+                        created.peer_id,
+                        float(req.speed_down_mbps or 0),
+                        float(req.speed_up_mbps or 0),
+                    )
 
-            if req.speed_down_mbps is not None or req.speed_up_mbps is not None:
-                self.set_speed_limits(
-                    created.peer_id,
-                    float(req.speed_down_mbps or 0),
-                    float(req.speed_up_mbps or 0),
+                has_policy = any(
+                    x is not None
+                    for x in (
+                        req.limit_down_gb,
+                        req.limit_up_gb,
+                        req.period,
+                        req.overlimit_mode,
+                        req.overlimit_down_mbps,
+                        req.overlimit_up_mbps,
+                    )
                 )
+                if has_policy:
+                    self.set_traffic_policy(
+                        created.peer_id,
+                        float(req.limit_down_gb or 0),
+                        float(req.limit_up_gb or 0),
+                        req.period or "0",
+                        req.overlimit_mode or "disable",
+                        float(req.overlimit_down_mbps or 0),
+                        float(req.overlimit_up_mbps or 0),
+                    )
 
-            has_policy = any(
-                x is not None
-                for x in (
-                    req.limit_down_gb,
-                    req.limit_up_gb,
-                    req.period,
-                    req.overlimit_mode,
-                    req.overlimit_down_mbps,
-                    req.overlimit_up_mbps,
-                )
-            )
-            if has_policy:
-                self.set_traffic_policy(
-                    created.peer_id,
-                    float(req.limit_down_gb or 0),
-                    float(req.limit_up_gb or 0),
-                    req.period or "0",
-                    req.overlimit_mode or "disable",
-                    float(req.overlimit_down_mbps or 0),
-                    float(req.overlimit_up_mbps or 0),
-                )
-
-            conf = [
-                "[Interface]",
-                f"PrivateKey = {priv}",
-                f"Address = {ip_obj}/32",
-                f"DNS = {self.engine.cfg_dns}",
-                "",
-                "[Peer]",
-                f"PublicKey = {server_pub}",
-                f"AllowedIPs = {CFG_ALLOWED_IPS}",
-                f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
-                f"PersistentKeepalive = {CFG_KEEPALIVE}",
-            ]
-            filename = f"{slug(req.comment.strip() or str(ip_obj), max_len=32)}.conf"
-            return {"config": "\n".join(conf), "filename": filename, "peer_id": created.peer_id}
+                conf = [
+                    "[Interface]",
+                    f"PrivateKey = {priv}",
+                    f"Address = {ip_obj}/32",
+                    f"DNS = {self.engine.cfg_dns}",
+                    "",
+                    "[Peer]",
+                    f"PublicKey = {server_pub}",
+                    f"AllowedIPs = {CFG_ALLOWED_IPS}",
+                    f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
+                    f"PersistentKeepalive = {CFG_KEEPALIVE}",
+                ]
+                filename = f"{slug(req.comment.strip() or str(ip_obj), max_len=32)}.conf"
+                return {"config": "\n".join(conf), "filename": filename, "peer_id": created.peer_id}
 
     def export_users_json(self) -> str:
-        with self._lock:
-            self.engine.refresh_data(force=False)
-            return self.engine.export_users_snapshot_json()
+        with self._operation("export users json"):
+            with self._lock:
+                self.engine.refresh_data(force=False)
+                return self.engine.export_users_snapshot_json()
 
     def export_users_pdf(self) -> str:
-        with self._lock:
-            self.engine.refresh_data(force=False)
-            return self.engine.export_users_snapshot_pdf()
+        with self._operation("export users pdf"):
+            with self._lock:
+                self.engine.refresh_data(force=False)
+                return self.engine.export_users_snapshot_pdf()
 
     def export_dashboard_json(self) -> str:
-        with self._lock:
-            self.engine.refresh_data(force=False)
-            return self.engine.export_dashboard_snapshot(csv_mode=False)
+        with self._operation("export dashboard json"):
+            with self._lock:
+                self.engine.refresh_data(force=False)
+                return self.engine.export_dashboard_snapshot(csv_mode=False)
 
     def export_dashboard_csv(self) -> str:
-        with self._lock:
-            self.engine.refresh_data(force=False)
-            return self.engine.export_dashboard_snapshot(csv_mode=True)
+        with self._operation("export dashboard csv"):
+            with self._lock:
+                self.engine.refresh_data(force=False)
+                return self.engine.export_dashboard_snapshot(csv_mode=True)
 
     def diagnostics(self) -> List[Dict[str, str]]:
-        with self._lock:
-            self.engine.run_connection_diagnostics()
-            return self.engine.diagnostics
+        with self._operation("diagnostics run"):
+            with self._lock:
+                self.engine.run_connection_diagnostics()
+                return self.engine.diagnostics
 
 
 def load_json_file(path: str) -> Any:

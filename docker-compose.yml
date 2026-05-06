@@ -1,0 +1,25 @@
+services:
+  wireguard-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mikrotik-wireguard-manager
+    restart: unless-stopped
+    ports:
+      - "${WG_WEB_PORT:-8088}:8088"
+    environment:
+      WG_WEB_ENV_FILE: /app/.env
+      WG_WEB_STATE_FILE: /app/data/.wg_web_state.json
+    volumes:
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: wg-web-data
+        target: /app/data
+
+volumes:
+  wg-web-data:

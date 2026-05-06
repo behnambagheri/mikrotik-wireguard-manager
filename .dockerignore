@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.DS_Store
+.env
+.wg_web_state.json
+users-snapshot-*.json
+users-snapshot-*.pdf
+dashboard-*.json
+dashboard-*.csv

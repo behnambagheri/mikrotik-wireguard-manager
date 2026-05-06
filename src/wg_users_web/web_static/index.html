@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MikroTik WireGuard Manager - Web</title>
+  <link rel="stylesheet" href="/static/app.css?v=1.0.3" />
+</head>
+<body data-theme="dark">
+  <div class="wrap">
+    <header class="app-hero">
+      <div>
+        <h1>WireGuard Traffic Monitor</h1>
+        <div class="subtitle">MikroTik operations console for router health, live bandwidth, client quotas, and policy actions.</div>
+      </div>
+      <span class="pill" id="statusBar">status: ready</span>
+    </header>
+
+    <div class="panel topbar">
+      <strong>Router</strong>
+      <select id="profileSelect"></select>
+      <button onclick="selectProfile()">Switch</button>
+      <button onclick="openProfileModal()">Manage Routers</button>
+      <button onclick="refreshAll()">Refresh</button>
+      <button class="ghost" id="themeBtn" onclick="toggleTheme()">Dark</button>
+      <div class="actions-dd" id="panelSettingsDropdown">
+        <button class="ghost" onclick="togglePanelSettingsMenu(event)">Panel</button>
+        <div id="panelSettingsMenu" class="actions-dd-menu panel-settings-menu">
+          <div class="actions-dd-head">
+            <span class="actions-dd-title">Visible Sections</span>
+          </div>
+          <label><input id="sectionToggle_dashboard" type="checkbox" onchange="setPanelSectionVisible('dashboard', this.checked)" checked /> Dashboard</label>
+          <label><input id="sectionToggle_diagnostics" type="checkbox" onchange="setPanelSectionVisible('diagnostics', this.checked)" checked /> Diagnostics</label>
+          <label><input id="sectionToggle_wg_health" type="checkbox" onchange="setPanelSectionVisible('wg_health', this.checked)" checked /> WG Health</label>
+          <label><input id="sectionToggle_router_pulse" type="checkbox" onchange="setPanelSectionVisible('router_pulse', this.checked)" checked /> Router Pulse</label>
+          <label><input id="sectionToggle_snapshots" type="checkbox" onchange="setPanelSectionVisible('snapshots', this.checked)" checked /> Snapshot Graphs</label>
+          <label><input id="sectionToggle_groups" type="checkbox" onchange="setPanelSectionVisible('groups', this.checked)" checked /> Groups</label>
+          <label><input id="sectionToggle_clients" type="checkbox" onchange="setPanelSectionVisible('clients', this.checked)" checked /> Clients</label>
+        </div>
+      </div>
+      <span class="spacer"></span>
+      <label class="meta">Auto</label>
+      <select id="autoSec" onchange="savePanelSettingsDebounced()">
+        <option value="0">off</option>
+        <option value="2">2s</option>
+        <option value="5" selected>5s</option>
+        <option value="10">10s</option>
+      </select>
+      <button onclick="toggleAuto()" id="autoBtn">Start</button>
+    </div>
+
+    <div class="grid2" style="margin-top:12px;">
+      <div class="panel dashboard-panel" data-panel-section="dashboard">
+        <div class="row section-head dashboard-head">
+          <strong>Dashboard</strong>
+          <span class="spacer"></span>
+          <div class="dash-actions">
+            <button class="ghost compact" onclick="exportDashJson()">Export JSON</button>
+            <button class="ghost compact" onclick="exportDashCsv()">Export CSV</button>
+          </div>
+        </div>
+        <div class="cards dashboard-cards">
+          <div class="card kpi-card"><div class="k">CPU</div><div class="v kpi-value" id="cpuVal">-</div><div class="bar"><span id="cpuBar" style="width:0%"></span></div></div>
+          <div class="card kpi-card"><div class="k">Memory</div><div class="v kpi-value" id="memVal">-</div><div class="bar"><span id="memBar" style="width:0%"></span></div></div>
+          <div class="card kpi-card"><div class="k">Disk</div><div class="v kpi-value" id="diskVal">-</div><div class="bar"><span id="diskBar" style="width:0%"></span></div></div>
+          <div class="card kpi-card bandwidth-card"><div class="k">Bandwidth</div><div class="v kpi-value" id="bwVal">-</div></div>
+        </div>
+        <div class="overview-chips" id="overviewLine"></div>
+        <div class="row" id="alerts" style="margin-top:8px;"></div>
+
+        <div class="row" style="margin-top:10px;"><strong>Interfaces</strong></div>
+        <div class="table-wrap">
+          <table id="interfacesTable">
+            <thead>
+              <tr>
+                <th onclick="setIfSort('name')">Name</th>
+                <th onclick="setIfSort('type')">Type</th>
+                <th onclick="setIfSort('running')">Running</th>
+                <th onclick="setIfSort('rx_bps')">RX</th>
+                <th onclick="setIfSort('tx_bps')">TX</th>
+                <th onclick="setIfSort('combined_bps')">Total</th>
+                <th onclick="setIfSort('window_usage_bytes')">Window Usage</th>
+              </tr>
+            </thead>
+            <tbody id="ifStatsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel router-side-panel">
+        <div data-panel-section="diagnostics">
+          <div class="row section-head"><strong>Diagnostics</strong><span class="spacer"></span><button onclick="runDiagnostics()">Run</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Profile</th><th>Router</th><th>Status</th><th>Ports</th><th>Detail</th></tr></thead>
+              <tbody id="diagBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div data-panel-section="wg_health">
+          <div class="row" style="margin-top:10px;"><strong>WG Health</strong></div>
+          <div id="wgHealth" class="meta"></div>
+        </div>
+        <div class="side-insight" data-panel-section="router_pulse">
+          <div class="side-insight-title">Router Pulse</div>
+          <div class="side-insight-grid">
+            <div><span id="pulsePeers">-</span><small>WG peers</small></div>
+            <div><span id="pulseActive">-</span><small>active ≤3m</small></div>
+            <div><span id="pulseBandwidth">-</span><small>WG bandwidth</small></div>
+          </div>
+          <div class="side-insight-bar"><span id="pulseActiveBar" style="width:0%"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:12px;" data-panel-section="snapshots">
+      <div class="row"><strong>Snapshot Graphs (Router Data)</strong></div>
+      <div id="snapshotCharts" class="snap-grid"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px;" data-panel-section="groups">
+      <div class="row section-head">
+        <strong>Groups</strong>
+        <span id="groupsCount" class="pill">0 groups</span>
+        <span class="spacer"></span>
+        <button class="ghost compact" onclick="toggleGroupsPanelCollapsed()">Collapse/Expand</button>
+        <input id="groupName" placeholder="Group name" maxlength="64" style="min-width:220px" />
+        <button onclick="createGroup()">Create</button>
+      </div>
+      <div id="groupsList" class="group-list"></div>
+    </div>
+
+    <div class="panel clients-panel" style="margin-top:12px;" data-panel-section="clients" id="clientsPanel">
+        <div class="row section-head">
+          <strong>Clients</strong>
+          <span id="clientsCount" class="pill"></span>
+          <span class="spacer"></span>
+          <input id="searchBox" placeholder="Search name/ip/interface/peer id" oninput="sanitizeSearchInput(); renderClients();" style="min-width:260px" />
+          <select id="clientFilter" onchange="savePanelSettingsDebounced(); renderClients()" title="Client filter">
+            <option value="all">all users</option>
+            <option value="disabled">disabled</option>
+            <option value="enabled">enabled</option>
+            <option value="groups">groups</option>
+            <option value="singles">singles</option>
+            <option value="overlimited">overlimited</option>
+            <option value="without_limits">without policy or speed limit</option>
+          </select>
+        </div>
+        <div class="row mobile-actions" style="margin-top:10px; margin-bottom:10px;">
+          <button class="ghost" onclick="selectAllVisible()">Select visible</button>
+          <button class="ghost" onclick="clearBatch()">Clear selection</button>
+          <button class="ghost" onclick="expandAllGroups()">Expand all</button>
+          <button class="ghost" onclick="collapseAllGroups()">Collapse all</button>
+          <button class="ghost" onclick="toggleClientsFullscreen()">Fullscreen</button>
+        <button onclick="openModal('addModal')">Add Client</button>
+        <div class="actions-dd" id="actionsDropdown">
+          <button id="actionsMenuBtn" onclick="openActionsMenu(event)">Actions</button>
+          <div id="actionsDdMenu" class="actions-dd-menu">
+            <div class="actions-dd-head">
+              <span class="actions-dd-title">Actions</span>
+              <span id="actionsMenuCount" class="pill">0 selected</span>
+            </div>
+            <div class="actions-dd-list">
+              <button onclick="menuEdit()">Edit</button>
+              <button onclick="menuEnable()">Enable</button>
+              <button onclick="menuDisable()">Disable</button>
+              <button onclick="menuResetUsage()">Reset usage</button>
+              <button id="actionsMenuClear" onclick="menuClearLimits()">Clear limits</button>
+              <button class="danger" onclick="menuDelete()">Delete</button>
+              <button id="actionsMenuRevoke" onclick="menuRevoke()">Revoke</button>
+            </div>
+            <div class="meta" id="actionsMenuHint" style="margin-top:6px;">Select one or more clients.</div>
+          </div>
+        </div>
+          <button onclick="exportUsersJson()">Export users JSON</button>
+          <button onclick="exportUsersPdf()">Export users PDF</button>
+      </div>
+      <div class="table-wrap" style="max-height:460px;height:460px;">
+        <table id="clientsTable" class="wide-table clients-table">
+          <thead>
+            <tr>
+              <th data-col="sel" title="Select">Sel</th>
+              <th data-col="name" onclick="setSort('name')" title="Client name/comment">Name</th>
+              <th data-col="ip" onclick="setSort('ip')" title="Client IP address">IP</th>
+              <th data-col="dspd" onclick="setSort('down_speed_bps')" title="Current download speed">DSpd</th>
+              <th data-col="uspd" onclick="setSort('up_speed_bps')" title="Current upload speed">USpd</th>
+              <th data-col="qpct" onclick="setSort('quota_pct')" title="Quota used percent (max of up/down)">QUsed%</th>
+              <th data-col="spct" onclick="setSort('speed_pct')" title="Speed cap usage percent (max of up/down)">Spd%</th>
+              <th data-col="oact" onclick="setSort('overlimit_active')" title="Over-limit currently active">OAct</th>
+              <th data-col="period" onclick="setSort('traffic_period_seconds')" title="Quota reset period">Period</th>
+              <th data-col="up" onclick="setSort('upload_since_now_bytes')" title="Upload since baseline">Up</th>
+              <th data-col="down" onclick="setSort('download_since_now_bytes')" title="Download since baseline">Down</th>
+              <th data-col="slimd" onclick="setSort('speed_limit_down_bps')" title="Normal speed limit download">SLimD</th>
+              <th data-col="slimu" onclick="setSort('speed_limit_up_bps')" title="Normal speed limit upload">SLimU</th>
+              <th data-col="dlim" onclick="setSort('traffic_limit_down_bytes')" title="Download quota limit">DLim</th>
+              <th data-col="ulim" onclick="setSort('traffic_limit_up_bytes')" title="Upload quota limit">ULim</th>
+              <th data-col="omode" onclick="setSort('overlimit_mode')" title="Over-limit mode">OMode</th>
+              <th data-col="odown" onclick="setSort('overlimit_speed_down_bps')" title="Over-limit download speed">ODown</th>
+              <th data-col="oup" onclick="setSort('overlimit_speed_up_bps')" title="Over-limit upload speed">OUp</th>
+              <th data-col="state" onclick="setSort('state')" title="Client state">State</th>
+              <th data-col="interface" onclick="setSort('interface')" title="WireGuard interface">Iface</th>
+              <th data-col="effective" onclick="setSort('limit_conflict_count')" title="Effective limit owner">Effective</th>
+              <th data-col="groups" onclick="setSort('group_names')" title="Assigned groups">Groups</th>
+            </tr>
+          </thead>
+          <tbody id="clientsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="authModal">
+    <div class="modal-card" style="width:min(720px,96vw);">
+      <div class="row">
+        <strong id="authTitle">Router login</strong>
+        <span class="spacer"></span>
+        <span class="pill" id="authMode">session only</span>
+      </div>
+      <form id="authForm" onsubmit="event.preventDefault(); submitAuthLogin();">
+      <div class="field-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top:12px;">
+        <div class="field auth-meta-field">
+          <label class="field-label" for="authProfileName">Profile name</label>
+          <input id="authProfileName" name="profile" placeholder="default" maxlength="64" autocomplete="organization-title" />
+        </div>
+        <div class="field auth-meta-field">
+          <label class="field-label" for="authRouterIp">Router IP</label>
+          <input id="authRouterIp" name="router" placeholder="192.168.88.1" autocomplete="url" />
+        </div>
+        <div class="field">
+          <label class="field-label" for="authUser">Username</label>
+          <input id="authUser" name="username" autocomplete="username" placeholder="admin" />
+        </div>
+        <div class="field">
+          <label class="field-label" for="authPassword">Password</label>
+          <input id="authPassword" name="password" autocomplete="current-password" type="password" placeholder="Router password" />
+        </div>
+        <div class="field auth-meta-field">
+          <label class="field-label" for="authTransport">Transport</label>
+          <select id="authTransport" name="transport" autocomplete="off">
+            <option value="rest">rest</option>
+            <option value="api">api</option>
+            <option value="api-ssl">api-ssl</option>
+          </select>
+        </div>
+        <div class="field auth-meta-field">
+          <label class="field-label" for="authEndpointIp">Endpoint IP</label>
+          <input id="authEndpointIp" name="endpoint" placeholder="Optional public endpoint" autocomplete="url" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <label class="meta"><input id="authRemember" type="checkbox" onchange="updateAuthRememberText()" /> Remember username/password</label>
+        <span class="meta" id="authHint">If unchecked, username and password are only used for this running server session.</span>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <span class="spacer"></span>
+        <button class="ghost" onclick="closeModal('authModal')">Cancel</button>
+        <button type="submit">Connect</button>
+      </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="addModal">
+    <div class="modal-card">
+      <div class="row"><strong>Add Client</strong><span class="spacer"></span><button class="ghost" onclick="closeModal('addModal')">Close</button></div>
+      <div class="row">
+        <select id="addIface" style="min-width:180px;"></select>
+        <button onclick="suggestIp()">Suggest IP</button>
+        <input id="addIp" placeholder="IP" inputmode="decimal" maxlength="15" />
+        <input id="addComment" placeholder="Comment" maxlength="32" style="min-width:240px" />
+      </div>
+      <div class="row">
+        <input id="addSpeedDown" placeholder="Speed down Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addSpeedUp" placeholder="Speed up Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addLimitDown" placeholder="Limit down GB (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addLimitUp" placeholder="Limit up GB (optional)" inputmode="decimal" maxlength="16" />
+      </div>
+      <div class="row">
+        <input id="addPeriod" placeholder="Period (optional: day/2h/0)" maxlength="16" />
+        <select id="addMode">
+          <option value="">Over-limit mode (optional)</option>
+          <option value="disable">disable</option>
+          <option value="throttle">throttle</option>
+          <option value="trusted_only">trusted_only</option>
+        </select>
+        <input id="addOverDown" placeholder="Over down Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <input id="addOverUp" placeholder="Over up Mbps (optional)" inputmode="decimal" maxlength="16" />
+        <button onclick="addClient()">Create</button>
+      </div>
+      <div class="row" style="margin-top:10px;"><strong>Client Config</strong><span class="spacer"></span><button onclick="copyAddConfig()">Copy</button><button onclick="downloadAddConfig()">Save file</button></div>
+      <div style="height:10px"></div>
+      <textarea id="addConfigOut" style="min-height:200px;" placeholder="New client configuration appears here after create."></textarea>
+    </div>
+  </div>
+
+  <div class="modal" id="actionsModal">
+    <div class="modal-card modal-lg">
+      <div class="row"><strong>Actions</strong><span class="spacer"></span><span class="pill" id="selectedPeer">none</span><button class="ghost" onclick="closeModal('actionsModal')">Close</button></div>
+      <div class="row" style="margin-top:6px;">
+        <span class="pill" id="batchCount">0 selected</span>
+        <span class="meta" id="actionsMode">mode: none</span>
+      </div>
+      <div id="actionsSelectedList" style="margin-top:8px;"></div>
+      <div id="actionsUserGraphsWrap" style="margin-top:8px;">
+        <div class="row"><strong>Client Graphs</strong></div>
+        <div id="actionsUserGraphs" class="actions-graphs"></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnActionEnable" onclick="actionSetEnable(true)">Enable</button>
+        <button id="btnActionDisable" onclick="actionSetEnable(false)">Disable</button>
+        <button id="btnActionReset" onclick="actionResetUsage()">Reset usage</button>
+        <button id="btnActionClear" onclick="actionClearLimits()">Clear limits</button>
+        <button id="btnActionRevoke" onclick="actionRevoke()">Revoke</button>
+        <button id="btnActionDelete" class="danger" onclick="actionDelete()">Delete</button>
+      </div>
+      <div class="row speed-row">
+        <div class="field-grid speed-grid">
+          <div class="field">
+            <label class="field-label" for="spDown">Speed Download (Mbps)</label>
+            <input id="spDown" placeholder="e.g. 20" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="spUp">Speed Upload (Mbps)</label>
+            <input id="spUp" placeholder="e.g. 10" />
+          </div>
+          <div class="field field-actions">
+            <button id="btnActionSetSpeed" onclick="actionSetSpeed()">Set speed</button>
+          </div>
+        </div>
+      </div>
+      <div class="row policy-row">
+        <div class="field-grid policy-grid">
+          <div class="field">
+            <label class="field-label" for="plDown">Limit Download (GB)</label>
+            <input id="plDown" placeholder="e.g. 50" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plUp">Limit Upload (GB)</label>
+            <input id="plUp" placeholder="e.g. 20" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plPeriod">Period</label>
+            <input id="plPeriod" placeholder="e.g. 1d / 2h / 0" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plMode">Over-limit Mode</label>
+            <select id="plMode">
+              <option value="disable">disable</option>
+              <option value="throttle">throttle</option>
+              <option value="trusted_only">trusted_only</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="plOverDown">Over Download (Mbps)</label>
+            <input id="plOverDown" placeholder="e.g. 5" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="plOverUp">Over Upload (Mbps)</label>
+            <input id="plOverUp" placeholder="e.g. 3" />
+          </div>
+          <div class="field field-actions">
+            <button id="btnActionSetPolicy" onclick="actionSetPolicy()">Set policy</button>
+          </div>
+        </div>
+      </div>
+      <div class="row meta">If one client is selected: single change. If multiple are selected: batch change.</div>
+      <div id="actionsConfigSection">
+        <div class="row" style="margin-top:10px;"><strong>Config Output</strong><span class="spacer"></span><button id="btnCopyConfig" onclick="copyConfig()">Copy</button><button id="btnSaveConfig" onclick="downloadConfig()">Save file</button></div>
+        <div style="height:10px"></div>
+        <textarea id="configOut" placeholder="New client/revoke configuration appears here."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="profileModal">
+    <div class="modal-card">
+      <div class="row"><strong>Manage Routers</strong><span class="spacer"></span><button class="ghost" onclick="closeModal('profileModal')">Close</button></div>
+      <div class="profile-manager">
+        <div>
+          <div class="row" style="margin-bottom:8px;">
+            <button class="ghost" onclick="newProfileForm()">New</button>
+            <span class="spacer"></span>
+            <span class="pill" id="pmCurrent">current: -</span>
+          </div>
+          <div class="pm-field" style="margin-bottom:8px;">
+            <label for="pmDefaultProfile">Default Router</label>
+            <div class="row">
+              <select id="pmDefaultProfile"></select>
+              <button class="ghost" onclick="saveDefaultProfile()">Set</button>
+            </div>
+          </div>
+          <div id="profileList" class="profile-list"></div>
+        </div>
+        <div>
+          <div class="pm-grid">
+            <div class="pm-field full">
+              <label for="pmName">Profile Name</label>
+              <input id="pmName" maxlength="64" placeholder="e.g. Novin_Max" />
+            </div>
+            <div class="pm-field">
+              <label for="pmRouterIp">Router IP</label>
+              <input id="pmRouterIp" placeholder="e.g. 172.16.40.1" />
+            </div>
+            <div class="pm-field">
+              <label for="pmTransport">Transport</label>
+              <select id="pmTransport">
+                <option value="rest">rest</option>
+                <option value="api">api</option>
+                <option value="api-ssl">api-ssl</option>
+              </select>
+            </div>
+            <div class="pm-field">
+              <label for="pmUser">User</label>
+              <input id="pmUser" />
+            </div>
+            <div class="pm-field">
+              <label for="pmPassword">Password</label>
+              <input id="pmPassword" type="text" />
+            </div>
+            <div class="pm-field">
+              <label for="pmEndpointIp">Endpoint IP</label>
+              <input id="pmEndpointIp" />
+            </div>
+            <div class="pm-field">
+              <label for="pmDns">DNS Servers</label>
+              <input id="pmDns" placeholder="x.x.x.x,y.y.y.y" />
+            </div>
+            <div class="pm-field">
+              <label for="pmTimeout">Timeout (sec)</label>
+              <input id="pmTimeout" placeholder="30" />
+            </div>
+            <div class="pm-field">
+              <label for="pmUseHttps">Use HTTPS (rest)</label>
+              <select id="pmUseHttps">
+                <option value="">not set</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <div class="pm-field full">
+              <label for="pmExemptList">Exempt Traffic Address-list</label>
+              <input id="pmExemptList" placeholder="PRIVATE_RANGES" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <button onclick="saveProfile()">Save</button>
+            <button class="danger" onclick="deleteProfile()">Delete</button>
+            <span class="spacer"></span>
+            <span class="meta" id="pmMode">mode: create</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="groupEditorModal">
+    <div class="modal-card modal-lg">
+      <div class="row">
+        <strong id="groupEditorTitle">Group</strong>
+        <span class="pill" id="groupEditorCount">0 members</span>
+        <span class="spacer"></span>
+        <button class="danger" onclick="deleteGroup()">Delete group</button>
+        <button class="ghost" onclick="closeModal('groupEditorModal')">Close</button>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="row"><strong>Limits</strong><span class="meta">Applied on RouterOS for this group.</span></div>
+        <div class="row" style="margin-top:8px;">
+          <input id="groupSpeedDown" placeholder="Shared down Mbps" inputmode="decimal" maxlength="16" style="width:160px" />
+          <input id="groupSpeedUp" placeholder="Shared up Mbps" inputmode="decimal" maxlength="16" style="width:150px" />
+          <button id="groupSetSpeedBtn" onclick="setGroupSpeed()">Set shared speed</button>
+          <button class="ghost" onclick="resetGroupUsage()">Reset usage</button>
+          <button class="ghost" onclick="clearGroupLimits()">Clear limits</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <input id="groupLimitDown" placeholder="Quota down GB" inputmode="decimal" maxlength="16" style="width:145px" />
+          <input id="groupLimitUp" placeholder="Quota up GB" inputmode="decimal" maxlength="16" style="width:130px" />
+          <input id="groupPeriod" placeholder="Period" maxlength="16" style="width:95px" />
+          <select id="groupMode" style="width:135px">
+            <option value="disable">disable</option>
+            <option value="throttle">throttle</option>
+            <option value="trusted_only">trusted_only</option>
+          </select>
+          <input id="groupOverDown" placeholder="Over down Mbps" inputmode="decimal" maxlength="16" style="width:145px" />
+          <input id="groupOverUp" placeholder="Over up Mbps" inputmode="decimal" maxlength="16" style="width:130px" />
+          <button id="groupSetPolicyBtn" onclick="setGroupPolicy()">Set policy</button>
+        </div>
+      </div>
+      <div id="groupGraphsWrap" style="margin-top:12px; display:none;">
+        <div class="row"><strong>Group Graphs</strong></div>
+        <div id="groupGraphs" class="actions-graphs"></div>
+      </div>
+      <div class="group-editor-grid">
+        <div>
+          <div class="row"><strong>Current Members</strong></div>
+          <div class="table-wrap" style="max-height:440px; margin-top:8px;">
+            <table>
+              <thead><tr><th>Name</th><th>IP</th><th>Interface</th><th>Group Quota</th><th>Group Speed</th><th>Action</th></tr></thead>
+              <tbody id="groupMembersBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="row">
+            <strong>Available Users</strong>
+            <span class="spacer"></span>
+            <label class="meta"><input id="groupShowAllUsers" type="checkbox" onchange="groupEditorShowAll = this.checked; renderGroupEditor();" /> All users</label>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <input id="groupEditorSearch" placeholder="Search available users" oninput="renderGroupEditor()" style="min-width:260px" />
+            <button onclick="addCheckedToEditedGroup()">Add checked users</button>
+            <button class="ghost" onclick="selectAllAvailableForGroup()">Check all available</button>
+            <button class="ghost" onclick="clearAvailableForGroup()">Clear checks</button>
+          </div>
+          <div class="table-wrap" style="max-height:440px; margin-top:8px;">
+            <table>
+              <thead><tr><th>Add</th><th>Name</th><th>IP</th><th>Interface</th><th>Status</th></tr></thead>
+              <tbody id="groupAvailableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="staleModal">
+    <div class="modal-card">
+      <div class="row"><strong>Stale Handshake Peers (&gt;10m)</strong><span class="spacer"></span><span class="pill" id="staleCount">0 peers</span><button class="ghost" onclick="closeModal('staleModal')">Close</button></div>
+      <div class="table-wrap" style="max-height:420px; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>IP</th>
+              <th>Interface</th>
+              <th>State</th>
+              <th>Last Handshake</th>
+            </tr>
+          </thead>
+          <tbody id="staleBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  </div>
+  <script src="/static/app.core.js?v=1.0.3"></script>
+  <script src="/static/app.charts-table.js?v=1.0.3"></script>
+  <script src="/static/app.groups-profiles.js?v=1.0.3"></script>
+  <script src="/static/app.data.js?v=1.0.3"></script>
+  <script src="/static/app.client-actions.js?v=1.0.3"></script>
+  <script src="/static/app.bootstrap.js?v=1.0.3"></script>
+</body>
+</html>

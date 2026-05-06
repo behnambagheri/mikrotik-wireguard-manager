@@ -44,7 +44,7 @@
   <rect x="82" y="274" width="610" height="238" rx="14" fill="#ffffff" stroke="#d2dfeb"/>
   <rect x="720" y="274" width="638" height="238" rx="14" fill="#ffffff" stroke="#d2dfeb"/>
   <text x="112" y="318" fill="#122033" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Dashboard</text>
-  <text x="750" y="318" fill="#122033" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Diagnostics & WG Health</text>
+  <text x="750" y="318" fill="#122033" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">Diagnostics &amp; WG Health</text>
   <g>
     <rect x="112" y="344" width="124" height="104" rx="10" fill="#f2f7fc" stroke="#d2dfeb"/>
     <rect x="256" y="344" width="124" height="104" rx="10" fill="#f2f7fc" stroke="#d2dfeb"/>

@@ -4,7 +4,7 @@ Web panel for managing MikroTik RouterOS WireGuard clients, traffic policies, sh
 
 The application is a management and monitoring panel. Router-side enforcement stays on RouterOS through firewall, queue, address-list, and scheduler rules. The web process can be stopped without removing active RouterOS policies.
 
-![MikroTik WireGuard Manager panel preview](docs/panel-preview.svg)
+![MikroTik WireGuard Manager panel preview](docs/screenshots/dashboard-preview.webp)
 
 ## Features
 

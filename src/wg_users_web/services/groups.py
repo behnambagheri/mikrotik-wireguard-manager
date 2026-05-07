@@ -507,17 +507,23 @@ class GroupManagerMixin:
             remaining += 24 * 3600
         return max(0, min(period_seconds, remaining))
 
-    def _group_policy_usage_window(self, group_id: str) -> Dict[str, Any]:
+    def _group_policy_usage_window(
+        self,
+        group_id: str,
+        mangle_rows: Optional[List[Dict[str, Any]]] = None,
+        sched_rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         client = self.engine.client
         if client is None:
             return {}
         group = self._groups().get(group_id, {})
         names = self.group_rule_names(group_id)
-        try:
-            mangle_rows = client.list_mangle() or []
-            sched_rows = client.list_scheduler() or []
-        except Exception:
-            return {}
+        if mangle_rows is None or sched_rows is None:
+            try:
+                mangle_rows = client.list_mangle() or []
+                sched_rows = client.list_scheduler() or []
+            except Exception:
+                return {}
         up_counter = self._row_by_comment(mangle_rows, names["counter_up"]) or {}
         down_counter = self._row_by_comment(mangle_rows, names["counter_down"]) or {}
         check_sched = next((row for row in sched_rows if str(row.get("name", "")) == names["check_scheduler"]), {})
@@ -699,46 +705,65 @@ class GroupManagerMixin:
         elif existing_reset:
             client.delete_scheduler(str(existing_reset.get(".id")))
 
+    def build_groups_payload(self) -> List[Dict[str, Any]]:
+        groups = self._groups()
+        members_by_group = self._group_member_names()
+        policy_group_ids = {
+            gid
+            for gid, group in groups.items()
+            if int(group.get("traffic_limit_down_bytes", 0) or 0) > 0
+            or int(group.get("traffic_limit_up_bytes", 0) or 0) > 0
+        }
+        mangle_rows: Optional[List[Dict[str, Any]]] = None
+        sched_rows: Optional[List[Dict[str, Any]]] = None
+        if policy_group_ids and self.engine.client is not None:
+            try:
+                mangle_rows = self.engine.client.list_mangle() or []
+                sched_rows = self.engine.client.list_scheduler() or []
+            except Exception:
+                mangle_rows = []
+                sched_rows = []
+
+        rows: List[Dict[str, Any]] = []
+        for gid in sorted(groups.keys(), key=lambda x: str(groups[x].get("name", x)).lower()):
+            group = groups[gid]
+            members = members_by_group.get(gid, [])
+            usage_window: Dict[str, Any] = {}
+            if gid in policy_group_ids:
+                usage_window = self._group_policy_usage_window(gid, mangle_rows, sched_rows)
+            rows.append(
+                {
+                    "id": gid,
+                    "name": str(group.get("name", gid) or gid),
+                    "peer_ids": [m["peer_id"] for m in members],
+                    "members": members,
+                    "member_count": len(members),
+                    "address_list": self.group_address_list_name(gid),
+                    "speed_limit_down_bps": int(group.get("speed_limit_down_bps", 0) or 0),
+                    "speed_limit_up_bps": int(group.get("speed_limit_up_bps", 0) or 0),
+                    "speed_limit_down": bps_h(int(group.get("speed_limit_down_bps", 0) or 0)),
+                    "speed_limit_up": bps_h(int(group.get("speed_limit_up_bps", 0) or 0)),
+                    "traffic_limit_down_bytes": int(group.get("traffic_limit_down_bytes", 0) or 0),
+                    "traffic_limit_up_bytes": int(group.get("traffic_limit_up_bytes", 0) or 0),
+                    "traffic_period_seconds": int(group.get("traffic_period_seconds", 0) or 0),
+                    "overlimit_mode": str(group.get("overlimit_mode", "disable") or "disable"),
+                    "overlimit_speed_down_bps": int(group.get("overlimit_speed_down_bps", 0) or 0),
+                    "overlimit_speed_up_bps": int(group.get("overlimit_speed_up_bps", 0) or 0),
+                    "download_since_now_bytes": int(usage_window.get("download_since_now_bytes", 0) or 0),
+                    "upload_since_now_bytes": int(usage_window.get("upload_since_now_bytes", 0) or 0),
+                    "overlimit_active": bool(usage_window.get("overlimit_active", False)),
+                    "traffic_reset_elapsed_seconds": int(usage_window.get("traffic_reset_elapsed_seconds", 0) or 0),
+                    "traffic_reset_remaining_seconds": int(usage_window.get("traffic_reset_remaining_seconds", 0) or 0),
+                    "created_at": int(group.get("created_at", 0) or 0),
+                    "updated_at": int(group.get("updated_at", 0) or 0),
+                }
+            )
+        return rows
+
     def list_groups(self) -> List[Dict[str, Any]]:
         with self._lock:
             self.engine.refresh_data(force=False)
-            groups = self._groups()
-            members_by_group = self._group_member_names()
-            rows: List[Dict[str, Any]] = []
-            for gid in sorted(groups.keys(), key=lambda x: str(groups[x].get("name", x)).lower()):
-                group = groups[gid]
-                members = members_by_group.get(gid, [])
-                usage_window: Dict[str, Any] = {}
-                if int(group.get("traffic_limit_down_bytes", 0) or 0) > 0 or int(group.get("traffic_limit_up_bytes", 0) or 0) > 0:
-                    usage_window = self._group_policy_usage_window(gid)
-                rows.append(
-                    {
-                        "id": gid,
-                        "name": str(group.get("name", gid) or gid),
-                        "peer_ids": [m["peer_id"] for m in members],
-                        "members": members,
-                        "member_count": len(members),
-                        "address_list": self.group_address_list_name(gid),
-                        "speed_limit_down_bps": int(group.get("speed_limit_down_bps", 0) or 0),
-                        "speed_limit_up_bps": int(group.get("speed_limit_up_bps", 0) or 0),
-                        "speed_limit_down": bps_h(int(group.get("speed_limit_down_bps", 0) or 0)),
-                        "speed_limit_up": bps_h(int(group.get("speed_limit_up_bps", 0) or 0)),
-                        "traffic_limit_down_bytes": int(group.get("traffic_limit_down_bytes", 0) or 0),
-                        "traffic_limit_up_bytes": int(group.get("traffic_limit_up_bytes", 0) or 0),
-                        "traffic_period_seconds": int(group.get("traffic_period_seconds", 0) or 0),
-                        "overlimit_mode": str(group.get("overlimit_mode", "disable") or "disable"),
-                        "overlimit_speed_down_bps": int(group.get("overlimit_speed_down_bps", 0) or 0),
-                        "overlimit_speed_up_bps": int(group.get("overlimit_speed_up_bps", 0) or 0),
-                        "download_since_now_bytes": int(usage_window.get("download_since_now_bytes", 0) or 0),
-                        "upload_since_now_bytes": int(usage_window.get("upload_since_now_bytes", 0) or 0),
-                        "overlimit_active": bool(usage_window.get("overlimit_active", False)),
-                        "traffic_reset_elapsed_seconds": int(usage_window.get("traffic_reset_elapsed_seconds", 0) or 0),
-                        "traffic_reset_remaining_seconds": int(usage_window.get("traffic_reset_remaining_seconds", 0) or 0),
-                        "created_at": int(group.get("created_at", 0) or 0),
-                        "updated_at": int(group.get("updated_at", 0) or 0),
-                    }
-                )
-            return rows
+            return self.build_groups_payload()
 
     def create_group(self, name: str, peer_ids: List[str]) -> Dict[str, Any]:
         with self._operation("group create", name=name, count=len(peer_ids)):

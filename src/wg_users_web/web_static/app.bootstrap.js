@@ -10,18 +10,13 @@
         const epoch = routerDataEpoch;
         try {
           if (showStatus) setStatus('refreshing...');
-          const out = await api('/api/refresh', { method: 'POST', timeoutMs: 60000 });
+          const out = await api('/api/snapshot?refresh=1', { timeoutMs: 60000 });
           if (out && out.status === 'busy') {
             if (showStatus) setStatus('refresh skipped: manager busy');
             return;
           }
-          await Promise.all([
-            loadOverview({ epoch }),
-            loadInterfaceStats({ epoch }),
-            loadInterfaces({ epoch }),
-            loadGroups({ epoch }),
-            loadClients({ epoch }),
-          ]);
+          if (!isCurrentRouterDataEpoch(epoch)) return;
+          await applyLiveSnapshot(out, { silentStatus: !showStatus });
           if (!isCurrentRouterDataEpoch(epoch)) return;
           if (showStatus) setStatus('refreshed');
         } catch (e) {

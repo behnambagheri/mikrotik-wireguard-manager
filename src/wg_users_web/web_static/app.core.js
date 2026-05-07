@@ -1,6 +1,9 @@
 let selectedPeerId = null;
       let clientsCache = [];
       let groupsCache = [];
+      let clientByIdCache = new Map();
+      let groupByIdCache = new Map();
+      let groupByNameCache = new Map();
       let groupEditorId = null;
       let groupEditorShowAll = false;
       let sortKey = 'name';
@@ -52,6 +55,28 @@ let selectedPeerId = null;
     function numOrNull(id) { const v = val(id); return v === '' ? null : Number(v); }
     function num(id) { const v = val(id); return v === '' ? 0 : Number(v); }
     function byId(id) { return document.getElementById(id); }
+    function rebuildClientIndex() {
+      clientByIdCache = new Map((clientsCache || []).map((c) => [String(c.peer_id || ''), c]));
+    }
+    function rebuildGroupIndex() {
+      groupByIdCache = new Map();
+      groupByNameCache = new Map();
+      for (const group of groupsCache || []) {
+        const id = String(group.id || '');
+        const name = String(group.name || '');
+        if (id) groupByIdCache.set(id, group);
+        if (name) groupByNameCache.set(name, group);
+      }
+    }
+    function clientById(peerId) {
+      return clientByIdCache.get(String(peerId || '')) || null;
+    }
+    function groupById(groupId) {
+      return groupByIdCache.get(String(groupId || '')) || null;
+    }
+    function groupByName(name) {
+      return groupByNameCache.get(String(name || '')) || null;
+    }
     function updateBusyControls() {
       const busy = uiBusyCount > 0;
       document.body.setAttribute('data-busy', busy ? 'true' : 'false');
@@ -189,6 +214,10 @@ let selectedPeerId = null;
       }
       const mode = byId('addMode');
       if (mode) mode.value = '';
+      for (const id of ['addCfgDns', 'addCfgFullRoute', 'addCfgKeepalive']) {
+        const el = byId(id);
+        if (el) el.checked = true;
+      }
     }
     function resetActionsDraftInputs() {
       const ids = ['spDown', 'spUp', 'plDown', 'plUp', 'plPeriod', 'plOverDown', 'plOverUp'];
@@ -396,7 +425,7 @@ let selectedPeerId = null;
     }
     function refreshActionsMenuModal() {
       const ids = actionPeerIds();
-      const rows = ids.map((id) => clientsCache.find((x) => x.peer_id === id)).filter(Boolean);
+      const rows = ids.map((id) => clientById(id)).filter(Boolean);
       const hasGroupMember = rows.some(clientIsGroupMember);
       byId('actionsMenuCount').textContent = `${ids.length} selected`;
       byId('actionsMenuHint').textContent = ids.length === 0
@@ -804,12 +833,12 @@ let selectedPeerId = null;
       const refs = Array.isArray(c.groups) ? c.groups : [];
       for (const ref of refs) {
         const id = String(ref.id || '');
-        const found = groupsCache.find((g) => String(g.id || '') === id);
+        const found = groupById(id);
         if (found) return found;
       }
       const names = String(c.group_names || '').split(',').map((x) => x.trim()).filter(Boolean);
       for (const name of names) {
-        const found = groupsCache.find((g) => String(g.name || '') === name);
+        const found = groupByName(name);
         if (found) return found;
       }
       return null;
@@ -864,7 +893,7 @@ let selectedPeerId = null;
     function currentGroupSummaryRow() {
       const group = currentEditedGroup();
       if (!group) return null;
-      const members = (group.peer_ids || []).map((pid) => clientsCache.find((c) => c.peer_id === pid)).filter(Boolean);
+      const members = (group.peer_ids || []).map((pid) => clientById(pid)).filter(Boolean);
       return buildGroupSummaryRow(group, members);
     }
     function renderGroupGraphs() {

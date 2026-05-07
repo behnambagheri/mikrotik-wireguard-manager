@@ -222,6 +222,86 @@ WG_WEB_DEFAULT_PROFILE=Router1
             self.assertIn("traffic_reset_elapsed_seconds", row)
             self.assertIn("traffic_reset_remaining_seconds", row)
 
+    def test_web_manager_list_groups_reuses_policy_router_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "state.json")
+            wm = web_api.WebManager.__new__(web_api.WebManager)
+            wm._lock = threading.RLock()
+            wm.engine = mock.Mock()
+            wm.engine.profile_name = "Novin"
+            wm.engine.host = "10.0.0.1"
+            wm.engine.state = app.StateStore(path)
+            wm.engine.peers = [
+                app.PeerView(f"*{idx}", "wireguard", f"100.100.100.{idx}", f"User {idx}", 0, 0, False)
+                for idx in range(1, 11)
+            ]
+            wm.engine.client = mock.Mock()
+            wm.engine.client.list_mangle.return_value = []
+            wm.engine.client.list_scheduler.return_value = []
+
+            for idx, peer in enumerate(wm.engine.peers, start=1):
+                wm._groups()[f"group-{idx}"] = {
+                    "name": f"Group {idx}",
+                    "peer_ids": [peer.peer_id],
+                    "traffic_limit_down_bytes": 1024,
+                    "traffic_limit_up_bytes": 0,
+                    "traffic_period_seconds": 600,
+                }
+
+            rows = wm.list_groups()
+
+            self.assertEqual(len(rows), 10)
+            wm.engine.client.list_mangle.assert_called_once()
+            wm.engine.client.list_scheduler.assert_called_once()
+
+    def test_dashboard_snapshot_refreshes_once_and_reuses_group_policy_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "state.json")
+            wm = web_api.WebManager.__new__(web_api.WebManager)
+            wm._lock = threading.RLock()
+            wm.engine = mock.Mock()
+            wm.engine.profile_name = "Novin"
+            wm.engine.host = "10.0.0.1"
+            wm.engine.state = app.StateStore(path)
+            wm.engine.router_resource = {}
+            wm.engine.interfaces = []
+            wm.engine.iface_speed = {}
+            wm.engine.iface_baseline = {}
+            wm.engine.peer_exempt_counters = {}
+            wm.engine.last_poll_latency_ms = 0
+            wm.engine.status = ""
+            wm.engine.error = ""
+            wm.engine.total_bandwidth.return_value = (0, 0)
+            wm.engine.dashboard_alerts.return_value = []
+            wm.engine.wg_interface_health.return_value = []
+            wm.engine.peer_used_bytes.return_value = (0, 0)
+            wm.engine.peers = [
+                app.PeerView(f"*{idx}", "wireguard", f"100.100.100.{idx}", f"User {idx}", 0, 0, False)
+                for idx in range(1, 6)
+            ]
+            wm.engine.client = mock.Mock()
+            wm.engine.client.list_wireguard_interfaces.return_value = [{"name": "wireguard", "listen-port": "13231"}]
+            wm.engine.client.list_mangle.return_value = []
+            wm.engine.client.list_scheduler.return_value = []
+            for idx, peer in enumerate(wm.engine.peers, start=1):
+                wm._groups()[f"group-{idx}"] = {
+                    "name": f"Group {idx}",
+                    "peer_ids": [peer.peer_id],
+                    "traffic_limit_down_bytes": 1024,
+                    "traffic_limit_up_bytes": 0,
+                    "traffic_period_seconds": 600,
+                }
+
+            snapshot = wm.dashboard_snapshot(force_refresh=True)
+
+            wm.engine.refresh_data.assert_called_once_with(force=True)
+            wm.engine.client.list_wireguard_interfaces.assert_called_once()
+            wm.engine.client.list_mangle.assert_called_once()
+            wm.engine.client.list_scheduler.assert_called_once()
+            self.assertEqual(snapshot["status"], "ok")
+            self.assertEqual(len(snapshot["groups"]), 5)
+            self.assertEqual(len(snapshot["clients"]), 5)
+
     def test_web_manager_group_membership_rejects_other_group_members(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "state.json")
@@ -661,6 +741,46 @@ WG_WEB_DEFAULT_PROFILE=Router1
         self.assertEqual(rows[0]["traffic_reset_elapsed_seconds"], 1800)
         self.assertEqual(rows[0]["traffic_reset_remaining_seconds"], 1800)
         self.assertEqual(rows[0]["traffic_reset_progress_pct"], 50.0)
+
+    def test_web_manager_client_config_options_are_optional(self):
+        wm = web_api.WebManager.__new__(web_api.WebManager)
+        wm.engine = mock.Mock()
+        wm.engine.cfg_dns = "100.100.100.100, 100.100.100.101"
+        wm.engine.cfg_endpoint_host = "vpn.example.com"
+
+        conf = wm._build_client_config(
+            priv="client-private",
+            address="100.100.100.9/32",
+            server_pub="server-public",
+            listen_port="13231",
+            include_dns=False,
+            include_persistent_keepalive=False,
+            include_full_route=False,
+        )
+
+        self.assertIn("AllowedIPs = ", conf)
+        self.assertNotIn("AllowedIPs = 0.0.0.0/0", conf)
+        self.assertNotIn("DNS =", conf)
+        self.assertNotIn("PersistentKeepalive =", conf)
+
+    def test_diagnostics_skips_rest_probe_when_rest_ports_closed(self):
+        with mock.patch.dict(os.environ, {"WG_WEB_ENV_FILE": "/tmp/does-not-exist"}, clear=False):
+            a = app.App(DummyStdScr())
+        cfg = {
+            "router_ip": "10.0.0.1",
+            "user": "u",
+            "password": "p",
+            "transport": "rest",
+            "timeout_sec": "30",
+        }
+        a.tcp_open = mock.Mock(return_value=False)
+        a.rest_probe = mock.Mock()
+
+        row = a.classify_profile("Novin", cfg)
+
+        self.assertEqual(row["status"], "unreachable")
+        self.assertEqual(row["detail"], "http port closed")
+        a.rest_probe.assert_not_called()
 
     def test_sort_down_used_uses_adjusted_usage(self):
         with mock.patch.dict(os.environ, {"WG_WEB_ENV_FILE": "/tmp/does-not-exist"}, clear=False):

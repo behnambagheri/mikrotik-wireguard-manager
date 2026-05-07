@@ -479,7 +479,7 @@
 
     function refreshActionsModal() {
       const ids = actionPeerIds();
-      const rows = ids.map((id) => clientsCache.find((x) => x.peer_id === id)).filter(Boolean);
+      const rows = ids.map((id) => clientById(id)).filter(Boolean);
       const list = byId('actionsSelectedList');
       if (!rows.length) {
         byId('selectedPeer').textContent = 'none';
@@ -542,7 +542,7 @@
     function selectPeer(peerId) {
       selectedPeerId = peerId;
       actionDraftDirty = false;
-      const c = clientsCache.find(x => x.peer_id === peerId);
+      const c = clientById(peerId);
       byId('selectedPeer').textContent = c ? `${txt(c.name)} (${peerId})` : peerId;
       refreshActionsModal();
       updateClientSelectionHighlight();

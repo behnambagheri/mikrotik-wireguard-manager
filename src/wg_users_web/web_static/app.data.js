@@ -123,10 +123,12 @@
 
     function renderClientData(items) {
       clientsCache = items || [];
+      rebuildClientIndex();
       if (!groupsCache.length && typeof deriveGroupsFromClients === 'function') {
         const derivedGroups = deriveGroupsFromClients(clientsCache);
         if (derivedGroups.length) {
           groupsCache = derivedGroups;
+          rebuildGroupIndex();
           renderGroups();
         }
       }
@@ -137,7 +139,7 @@
       }
       renderClients();
       if (selectedPeerId) {
-        const c = clientsCache.find(x => x.peer_id === selectedPeerId) || null;
+        const c = clientById(selectedPeerId);
         refreshActionsModal();
         if (!c) {
           byId('selectedPeer').textContent = 'none';
@@ -146,7 +148,10 @@
       } else {
         refreshActionsModal();
       }
-      if (groupEditorId) renderGroupEditor();
+      if (groupEditorId) {
+        if (!groupDraftDirty) fillGroupEditorForm();
+        renderGroupEditor();
+      }
     }
 
     async function loadClients(options = {}) {
@@ -155,9 +160,13 @@
       renderClientData(data.items || []);
     }
 
-    async function applyLiveSnapshot(snapshot) {
+    async function applyLiveSnapshot(snapshot, options = {}) {
       if (!snapshot || snapshot.status === 'error') {
         setStatus(snapshot && snapshot.detail ? snapshot.detail : 'live update failed', true);
+        return;
+      }
+      if (snapshot.status === 'busy') {
+        if (!options.silentStatus) setStatus('live update skipped: manager busy');
         return;
       }
       const epoch = routerDataEpoch;
@@ -165,22 +174,41 @@
       renderInterfaceStats(snapshot.interfaces || []);
       await renderInterfaces(snapshot.wireguard_interfaces || [], { refreshPool: false });
       if (!isCurrentRouterDataEpoch(epoch)) return;
-      renderGroupData(snapshot.groups || []);
+      renderGroupData(snapshot.groups || [], { renderDependents: false });
       renderClientData(snapshot.clients || []);
-      setStatus(snapshot.status === 'busy' ? 'live update skipped: manager busy' : 'live update received');
+      if (!options.silentStatus) setStatus('live update received');
     }
 
     async function runDiagnostics() {
+      const body = byId('diagBody');
+      if (body) {
+        body.innerHTML = '<tr><td colspan="5" class="meta">Diagnostics running...</td></tr>';
+      }
       try {
-        const data = await api('/api/diagnostics');
-        const body = byId('diagBody');
+        const data = await api('/api/diagnostics', { timeoutMs: 180000 });
+        if (!body) return;
         body.innerHTML = '';
-        for (const d of data.items || []) {
+        const items = data.items || [];
+        if (!items.length) {
+          body.innerHTML = '<tr><td colspan="5" class="meta">No diagnostics rows returned.</td></tr>';
+          setStatus('diagnostics updated');
+          return;
+        }
+        for (const d of items) {
           const cls = d.status === 'ok' ? 'diag-ok' : 'diag-bad';
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${txt(d.profile)}</td><td>${txt(d.router_ip)}</td><td class="${cls}">${txt(d.status)}</td><td>${txt(d.ports)}</td><td>${txt(d.detail)}</td>`;
+          const fields = [d.profile, d.router_ip, d.status, d.ports, d.detail];
+          fields.forEach((field, idx) => {
+            const td = document.createElement('td');
+            if (idx === 2) td.className = cls;
+            td.textContent = txt(field);
+            tr.appendChild(td);
+          });
           body.appendChild(tr);
         }
         setStatus('diagnostics updated');
-      } catch (e) { setStatus(e.message, true); }
+      } catch (e) {
+        if (body) body.innerHTML = `<tr><td colspan="5" class="diag-bad">${esc(e.message)}</td></tr>`;
+        setStatus(e.message, true);
+      }
     }

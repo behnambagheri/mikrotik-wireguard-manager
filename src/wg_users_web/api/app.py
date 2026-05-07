@@ -143,6 +143,9 @@ class AddClientBody(BaseModel):
     overlimit_mode: str | None = None
     overlimit_down_mbps: float | None = Field(default=None, ge=0)
     overlimit_up_mbps: float | None = Field(default=None, ge=0)
+    include_dns: bool = True
+    include_persistent_keepalive: bool = True
+    include_full_route: bool = True
 
 
 def create_app() -> FastAPI:
@@ -239,6 +242,15 @@ def create_app() -> FastAPI:
             return {"status": "ok"}
         except Exception as e:
             if "Manager busy during refresh" in str(e):
+                return {"status": "busy"}
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @app.get("/api/snapshot")
+    def snapshot(refresh: bool = False) -> Dict[str, Any]:
+        try:
+            return manager.dashboard_snapshot(force_refresh=refresh)
+        except Exception as e:
+            if "Manager busy" in str(e):
                 return {"status": "busy"}
             raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -544,20 +556,11 @@ def create_app() -> FastAPI:
 
     def build_live_snapshot() -> Dict[str, Any]:
         try:
-            refresh_out = manager.refresh()
+            return manager.dashboard_snapshot(force_refresh=True)
         except Exception as e:
-            if "Manager busy during refresh" not in str(e):
-                raise
-            refresh_out = {"status": "busy"}
-        return {
-            "status": refresh_out.get("status", "ok") if isinstance(refresh_out, dict) else "ok",
-            "profile": manager.current_profile(),
-            "overview": manager.router_overview(),
-            "interfaces": manager.interface_stats(),
-            "wireguard_interfaces": manager.list_wireguard_interfaces(),
-            "groups": manager.list_groups(),
-            "clients": manager.list_clients(),
-        }
+            if "Manager busy" in str(e):
+                return {"status": "busy"}
+            raise
 
     @app.get("/api/live/events")
     async def live_events(request: Request, interval: float = 5.0) -> StreamingResponse:

@@ -382,7 +382,7 @@ class App:
         user = cfg.get("user", "").strip()
         password = cfg.get("password", "").strip().strip('"').strip("'")
         use_https = str(cfg.get("use_https", "false")).lower() == "true"
-        timeout_sec = float(cfg.get("timeout_sec", "5") or "5")
+        timeout_sec = max(0.5, min(float(cfg.get("timeout_sec", "5") or "5"), 5.0))
         transport = str(cfg.get("transport", "rest")).strip().lower()
         if not host or not user or not password:
             return {"profile": name, "router_ip": host or "-", "status": "error", "detail": "missing router_ip/user/password", "ports": "-"}
@@ -414,11 +414,19 @@ class App:
                 return {"profile": name, "router_ip": host, "status": "error", "detail": str(e), "ports": ports}
 
         schemes = ["https", "http"] if use_https else ["http", "https"]
-        first_status, first_detail = self.rest_probe(host, user, password, schemes[0], timeout_sec)
+        first_status, first_detail = (
+            self.rest_probe(host, user, password, schemes[0], timeout_sec)
+            if ((schemes[0] == "https" and p443) or (schemes[0] == "http" and p80))
+            else ("unreachable", f"{schemes[0]} port closed")
+        )
         if first_status == "ok":
             return {"profile": name, "router_ip": host, "status": "ok", "detail": f"{schemes[0]} ok", "ports": ports}
 
-        second_status, second_detail = self.rest_probe(host, user, password, schemes[1], timeout_sec)
+        second_status, second_detail = (
+            self.rest_probe(host, user, password, schemes[1], timeout_sec)
+            if ((schemes[1] == "https" and p443) or (schemes[1] == "http" and p80))
+            else ("unreachable", f"{schemes[1]} port closed")
+        )
         if second_status == "ok":
             return {"profile": name, "router_ip": host, "status": "ok", "detail": f"{schemes[1]} ok (preferred {schemes[0]} failed: {first_status})", "ports": ports}
 

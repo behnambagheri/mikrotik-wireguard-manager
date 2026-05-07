@@ -3,6 +3,36 @@ from .common import *
 
 
 class ClientManagerMixin:
+    def _build_client_config(
+        self,
+        priv: str,
+        address: str,
+        server_pub: str,
+        listen_port: str,
+        include_dns: bool = True,
+        include_persistent_keepalive: bool = True,
+        include_full_route: bool = True,
+    ) -> str:
+        conf = [
+            "[Interface]",
+            f"PrivateKey = {priv}",
+            f"Address = {address}",
+        ]
+        if include_dns:
+            conf.append(f"DNS = {self.engine.cfg_dns}")
+        conf.extend(
+            [
+                "",
+                "[Peer]",
+                f"PublicKey = {server_pub}",
+                f"AllowedIPs = {CFG_ALLOWED_IPS if include_full_route else ''}",
+                f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
+            ]
+        )
+        if include_persistent_keepalive:
+            conf.append(f"PersistentKeepalive = {CFG_KEEPALIVE}")
+        return "\n".join(conf)
+
     def set_enabled(self, peer_id: str, enabled: bool) -> None:
         with self._operation("client set enabled", peer_id=peer_id, enabled=enabled):
             with self._lock:
@@ -288,20 +318,14 @@ class ClientManagerMixin:
                 if not server_pub:
                     server_pub = "REPLACE_WITH_SERVER_PUBLIC_KEY"
 
-                conf = [
-                    "[Interface]",
-                    f"PrivateKey = {priv}",
-                    f"Address = {p.ip}/32",
-                    f"DNS = {self.engine.cfg_dns}",
-                    "",
-                    "[Peer]",
-                    f"PublicKey = {server_pub}",
-                    f"AllowedIPs = {CFG_ALLOWED_IPS}",
-                    f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
-                    f"PersistentKeepalive = {CFG_KEEPALIVE}",
-                ]
+                conf = self._build_client_config(
+                    priv=priv,
+                    address=f"{p.ip}/32",
+                    server_pub=server_pub,
+                    listen_port=listen_port,
+                )
                 filename = f"{slug((p.comment or p.ip) + '-revoked', max_len=40)}.conf"
-                return {"config": "\n".join(conf), "filename": filename}
+                return {"config": conf, "filename": filename}
 
     def add_client(self, req: AddClientRequest) -> Dict[str, str]:
         with self._operation("client add", interface=req.interface, ip=req.ip, comment=req.comment.strip()):
@@ -391,17 +415,14 @@ class ClientManagerMixin:
                         float(req.overlimit_up_mbps or 0),
                     )
 
-                conf = [
-                    "[Interface]",
-                    f"PrivateKey = {priv}",
-                    f"Address = {ip_obj}/32",
-                    f"DNS = {self.engine.cfg_dns}",
-                    "",
-                    "[Peer]",
-                    f"PublicKey = {server_pub}",
-                    f"AllowedIPs = {CFG_ALLOWED_IPS}",
-                    f"Endpoint = {self.engine.cfg_endpoint_host}:{listen_port}",
-                    f"PersistentKeepalive = {CFG_KEEPALIVE}",
-                ]
+                conf = self._build_client_config(
+                    priv=priv,
+                    address=f"{ip_obj}/32",
+                    server_pub=server_pub,
+                    listen_port=listen_port,
+                    include_dns=req.include_dns,
+                    include_persistent_keepalive=req.include_persistent_keepalive,
+                    include_full_route=req.include_full_route,
+                )
                 filename = f"{slug(req.comment.strip() or str(ip_obj), max_len=32)}.conf"
-                return {"config": "\n".join(conf), "filename": filename, "peer_id": created.peer_id}
+                return {"config": conf, "filename": filename, "peer_id": created.peer_id}

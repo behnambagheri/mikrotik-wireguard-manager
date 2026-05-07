@@ -53,22 +53,25 @@ class RouterDataMixin:
             out.sort(key=lambda x: int(x.get("combined_bps", 0)), reverse=True)
             return out
 
+    def build_wireguard_interfaces_payload(self) -> List[Dict[str, Any]]:
+        if self.engine.client is None:
+            raise RuntimeError("Router client is not initialized")
+        ifaces = self.engine.client.list_wireguard_interfaces() or []
+        out = []
+        for i in ifaces:
+            out.append(
+                {
+                    "name": str(i.get("name", "")),
+                    "listen_port": str(i.get("listen-port", "")),
+                    "public_key": str(i.get("public-key", "")),
+                }
+            )
+        return out
+
     def list_wireguard_interfaces(self) -> List[Dict[str, Any]]:
         with self._lock:
             self.engine.refresh_data(force=False)
-            if self.engine.client is None:
-                raise RuntimeError("Router client is not initialized")
-            ifaces = self.engine.client.list_wireguard_interfaces() or []
-            out = []
-            for i in ifaces:
-                out.append(
-                    {
-                        "name": str(i.get("name", "")),
-                        "listen_port": str(i.get("listen-port", "")),
-                        "public_key": str(i.get("public-key", "")),
-                    }
-                )
-            return out
+            return self.build_wireguard_interfaces_payload()
 
     def suggest_ip(self, interface: str) -> str:
         with self._lock:
@@ -228,3 +231,21 @@ class RouterDataMixin:
                 if row["peer_id"] == peer_id:
                     return row
             raise RuntimeError(f"Peer not found: {peer_id}")
+
+    def build_dashboard_snapshot(self, status: str = "ok") -> Dict[str, Any]:
+        return {
+            "status": status,
+            "profile": self.current_profile(),
+            "overview": self.router_overview(),
+            "interfaces": self.interface_stats(),
+            "wireguard_interfaces": self.build_wireguard_interfaces_payload(),
+            "groups": self.build_groups_payload(),
+            "clients": self.build_clients_payload(),
+        }
+
+    def dashboard_snapshot(self, force_refresh: bool = False) -> Dict[str, Any]:
+        with self._operation("dashboard snapshot", refresh=force_refresh):
+            with self._busy_lock("dashboard snapshot"):
+                if force_refresh:
+                    self.engine.refresh_data(force=True)
+                return self.build_dashboard_snapshot()

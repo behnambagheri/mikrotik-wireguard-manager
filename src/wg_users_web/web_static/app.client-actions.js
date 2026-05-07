@@ -60,6 +60,9 @@
           overlimit_mode: val('addMode') || null,
           overlimit_down_mbps: numOrNull('addOverDown'),
           overlimit_up_mbps: numOrNull('addOverUp'),
+          include_dns: byId('addCfgDns')?.checked !== false,
+          include_full_route: byId('addCfgFullRoute')?.checked !== false,
+          include_persistent_keepalive: byId('addCfgKeepalive')?.checked !== false,
         };
         const out = await api('/api/clients', { method: 'POST', body: JSON.stringify(body) });
         byId('configOut').value = out.config || '';
@@ -266,7 +269,7 @@
     async function setSpeed() {
       try {
         const peer = ensurePeer();
-        const row = clientsCache.find((c) => c.peer_id === peer);
+        const row = clientById(peer);
         if (clientIsGroupMember(row)) throw new Error('Individual limits cannot be applied to a user that belongs to a group');
         await api(`/api/clients/${encodeURIComponent(peer)}/speed`, {
           method: 'POST',
@@ -280,7 +283,7 @@
     async function setPolicy() {
       try {
         const peer = ensurePeer();
-        const row = clientsCache.find((c) => c.peer_id === peer);
+        const row = clientById(peer);
         if (clientIsGroupMember(row)) throw new Error('Individual limits cannot be applied to a user that belongs to a group');
         await api(`/api/clients/${encodeURIComponent(peer)}/policy`, {
           method: 'POST',

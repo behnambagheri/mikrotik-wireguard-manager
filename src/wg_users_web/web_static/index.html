@@ -287,6 +287,11 @@
         <input id="addOverUp" placeholder="Over up Mbps (optional)" inputmode="decimal" maxlength="16" />
         <button onclick="addClient()">Create</button>
       </div>
+      <div class="row" style="margin-top:10px;">
+        <label class="meta"><input id="addCfgDns" type="checkbox" checked /> DNS</label>
+        <label class="meta"><input id="addCfgFullRoute" type="checkbox" checked /> Full route (0.0.0.0/0)</label>
+        <label class="meta"><input id="addCfgKeepalive" type="checkbox" checked /> PersistentKeepalive</label>
+      </div>
       <div class="row" style="margin-top:10px;"><strong>Client Config</strong><span class="spacer"></span><button onclick="copyAddConfig()">Copy</button><button onclick="downloadAddConfig()">Save file</button></div>
       <div style="height:10px"></div>
       <textarea id="addConfigOut" style="min-height:200px;" placeholder="New client configuration appears here after create."></textarea>
@@ -543,11 +548,11 @@
   </div>
 
   </div>
-  <script src="/static/app.core.js?v=1.0.3"></script>
-  <script src="/static/app.charts-table.js?v=1.0.3"></script>
-  <script src="/static/app.groups-profiles.js?v=1.0.3"></script>
-  <script src="/static/app.data.js?v=1.0.3"></script>
-  <script src="/static/app.client-actions.js?v=1.0.3"></script>
-  <script src="/static/app.bootstrap.js?v=1.0.3"></script>
+  <script src="/static/app.core.js?v=1.0.5"></script>
+  <script src="/static/app.charts-table.js?v=1.0.5"></script>
+  <script src="/static/app.groups-profiles.js?v=1.0.5"></script>
+  <script src="/static/app.data.js?v=1.0.5"></script>
+  <script src="/static/app.client-actions.js?v=1.0.5"></script>
+  <script src="/static/app.bootstrap.js?v=1.0.5"></script>
 </body>
 </html>

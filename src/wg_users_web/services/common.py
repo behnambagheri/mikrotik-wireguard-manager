@@ -75,6 +75,9 @@ class AddClientRequest:
     overlimit_mode: Optional[str] = None
     overlimit_down_mbps: Optional[float] = None
     overlimit_up_mbps: Optional[float] = None
+    include_dns: bool = True
+    include_persistent_keepalive: bool = True
+    include_full_route: bool = True
 
 
 def load_json_file(path: str) -> Any:

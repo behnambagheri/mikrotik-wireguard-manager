@@ -33,7 +33,7 @@
     }
 
     function currentEditedGroup() {
-      return groupsCache.find((g) => g.id === groupEditorId) || null;
+      return groupById(groupEditorId);
     }
 
     function openGroupEditor(groupId) {
@@ -89,7 +89,7 @@
         policyBtn.title = hasMembers ? '' : 'Add at least one member before applying group policy';
       }
       const memberIds = new Set(group.peer_ids || []);
-      const members = (group.peer_ids || []).map((pid) => clientsCache.find((c) => c.peer_id === pid)).filter(Boolean);
+      const members = (group.peer_ids || []).map((pid) => clientById(pid)).filter(Boolean);
       membersBody.innerHTML = members.length ? '' : '<tr><td colspan="6" class="meta">No members.</td></tr>';
       for (const c of members) {
         const tr = document.createElement('tr');
@@ -179,7 +179,7 @@
 
     function fillGroupEditorForm() {
       const groupId = groupEditorId;
-      const g = groupsCache.find((x) => x.id === groupId);
+      const g = groupById(groupId);
       const down = byId('groupSpeedDown');
       const up = byId('groupSpeedUp');
       if (!down || !up) return;
@@ -193,10 +193,14 @@
       byId('groupOverUp').value = g && Number(g.overlimit_speed_up_bps || 0) > 0 ? fmtFormNumber(Number(g.overlimit_speed_up_bps) / 1_000_000) : '';
     }
 
-    function renderGroupData(items) {
+    function renderGroupData(items, options = {}) {
       const canDeriveGroups = typeof deriveGroupsFromClients === 'function';
       groupsCache = (items && items.length) ? items : (canDeriveGroups ? deriveGroupsFromClients(clientsCache) : []);
+      rebuildGroupIndex();
       renderGroups();
+      if (options.renderDependents === false) {
+        return;
+      }
       renderSnapshotCharts(clientsCache);
       if (clientsCache.length) renderClients();
       if (groupEditorId) {
